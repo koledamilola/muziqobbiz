@@ -6,10 +6,10 @@ Every agent reads this at the start of a session and updates it at the end. The 
 
 ## Current status
 
-- **Current stage / step:** Stage 1.1 complete (scaffold) — ready for Stage 1.2
-- **App URL (production):** _(added in Stage 1)_
-- **Last working checkpoint (git tag or commit):** `stage 1.1: scaffold` (local, not pushed)
-- **Next step:** Stage 1.2 — Deploy to Vercel
+- **Current stage / step:** Stage 1.2 complete (deployed) — ready for Stage 1.3
+- **App URL (production):** https://muziqobbiz.vercel.app
+- **Last working checkpoint (git tag or commit):** `07378e6` (`Add setup docs and app scaffold`), deployed to production
+- **Next step:** Stage 1.3 — Single-user login with Supabase
 - **Blockers:** none
 
 ---
@@ -38,6 +38,7 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | | Defaults from setup guide | | Owner |
 | 2026-10-06 | Use Node 24 LTS (v24.21.0) via Homebrew `node@24` instead of Node 26 (Current) | Setup guide asks for LTS | Owner |
 | 2026-10-06 | Kept create-next-app defaults for Next.js 16.4 (`cacheComponents`, `partialPrefetching` on in next.config.ts) | Scaffold default; revisit if it blocks auth/data pages in Stage 1.3 | Agent |
+| 2026-10-11 | Installed Node 24 LTS (v24.21.0) system-wide on Windows | Matches the project's selected LTS version and makes npm available in every terminal | Owner |
 
 ---
 
@@ -46,7 +47,7 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | Item | Stage | Status | Notes |
 |---|---|---|---|
 | `next dev` appends a "Next.js agent rules" block to AGENTS.md every time it runs | 1 | Open | Reverted each time to keep the owner's rulebook untouched. Owner to decide: keep the block, or ignore it |
-| Nav layout checked only via HTTP responses, not visually; phone untested | 1.1 | Untested | Owner to verify (see session log) |
+| Nav layout checked only via HTTP responses, not visually; phone untested | 1.1–1.2 | Untested | Owner should open the production URL on a phone and verify that the bottom nav appears and all four links work |
 
 ---
 
@@ -59,6 +60,16 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 ---
 
 ## Session log (newest first)
+
+### 2026-10-11 — Stage 1.2 deployed
+- **Date:** 2026-10-11
+- **Agent / tool used:** Codex
+- **Stage / step worked on:** Stage 1.2 — Deploy to Vercel
+- **What was done:** Confirmed Node.js v24.21.0 and npm v11.19.0 work system-wide on Windows. Reinstalled dependencies from `package-lock.json`, verified the production build locally, and inspected the existing Vercel project. Confirmed the production deployment is READY, uses Next.js, points at current `main` commit `07378e6`, and is available at https://muziqobbiz.vercel.app. Vercel's GitHub integration is connected to `koledamilola/muziqobbiz`; pushes to `main` create production deployments, while pushes to other branches create preview deployments.
+- **Tested? (by agent / by owner / untested):** Agent: lint, typecheck, and production build pass; local `/` redirects to `/muziqobbiz`; local and production `/muziqobbiz`, `/library`, `/reference`, and `/status` return HTTP 200. Owner: phone layout and navigation still to verify visually.
+- **Problems & how they were resolved:** The first dependency install was interrupted and left a partial `node_modules`; removed only that generated directory and ran a clean `npm ci`. The sandbox blocked Next.js child workers during the first build, so the identical build was rerun with normal process permissions and passed. The Vercel protected-page helper lacked bypass permission, but direct public HTTPS checks succeeded.
+- **Commit / tag:** `stage 1.2: record deployment`
+- **Exact next step:** Open https://muziqobbiz.vercel.app on a phone and confirm the bottom navigation works, then begin Stage 1.3 — single-user login with Supabase.
 
 ### 2026-10-06 — Stage 1.1 scaffold
 - **Date:** 2026-10-06
