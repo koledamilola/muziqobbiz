@@ -6,10 +6,10 @@ Every agent reads this at the start of a session and updates it at the end. The 
 
 ## Current status
 
-- **Current stage / step:** Stage 1.3 in progress — implementation and automated local verification complete; manual callback/sign-out and live verification pending
+- **Current stage / step:** Stage 1.3 deployed — signed-out protection verified locally and live; manual owner callback/sign-out verification pending
 - **App URL (production):** https://muziqobbiz.vercel.app
-- **Last working checkpoint (git tag or commit):** `6df5dd0` (`stage 1.2: record deployment`), pushed to `origin/main`
-- **Next step:** Create the Stage 1.3 checkpoint, deploy it, then complete local and live owner-login/sign-out verification when the Supabase email quota resets
+- **Last working checkpoint (git tag or commit):** `0bd5049` (`stage 1.3: login`), pushed to `origin/main` and deployed to production
+- **Next step:** Complete local and live owner-login/sign-out verification when the Supabase email quota resets, then disable new-user signup and begin Stage 1.4
 - **Blockers:** Supabase's built-in email provider is temporarily rate-limited to two auth emails per hour, so another end-to-end magic-link test cannot run yet
 
 ---
@@ -47,7 +47,7 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | Item | Stage | Status | Notes |
 |---|---|---|---|
 | `next dev` appends a "Next.js agent rules" block to AGENTS.md every time it runs | 1 | Open | Reverted each time to keep the owner's rulebook untouched. Owner to decide: keep the block, or ignore it |
-| Magic-link callback and sign-out with a real email | 1.3 | Partially tested | Real keys, owner form submission, non-owner rejection, signed-out redirects, and localhost redirect allow-list pass. The browser callback/session and sign-out still need confirmation after the email quota resets; live flow waits for deployment. |
+| Magic-link callback and sign-out with a real email | 1.3 | Partially tested | Real keys, owner form submission, non-owner rejection, signed-out redirects locally and live, deployed login form, and localhost redirect allow-list pass. The browser callback/session and sign-out still need confirmation after the email quota resets. |
 
 ---
 
@@ -69,10 +69,10 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 - **Agent / tool used:** Codex
 - **Stage / step worked on:** Stage 1.3 — Single-user login with Supabase
 - **What was done:** Pinned `@supabase/ssr` 0.12.7 and `@supabase/supabase-js` 2.117.3. Added browser, server, and server-only admin clients; Next.js 16 session proxy; owner-only magic-link login and callback; reusable `requireOwner`; sign-out; private-route redirects; and owner-email enforcement. Added real local configuration in ignored `.env.local`, and the owner configured Supabase and Vercel values plus the Supabase redirect allow-list.
-- **Tested? (by agent / by owner / untested):** Agent: lint, typecheck, and production build pass with the real configuration. Both Supabase keys authenticate; `.env.local` is ignored and no secret-looking values are tracked. `/login` returns 200, all four private pages redirect to `/login`, a non-owner form submission shows "This is a private app," an owner submission reaches Supabase, and Supabase now accepts the localhost callback instead of falling back to production. Owner: confirmed Stage 1.2 mobile navigation and that the first magic link reached the old production app. Untested: browser callback/session, sign-out, and live Stage 1.3 flow after deployment.
+- **Tested? (by agent / by owner / untested):** Agent: lint, typecheck, and production build pass with the real configuration. Both Supabase keys authenticate; `.env.local` is ignored and no secret-looking values are tracked. `/login` returns 200, all four private pages redirect to `/login`, a non-owner form submission shows "This is a private app," an owner submission reaches Supabase, and Supabase accepts the localhost callback instead of falling back to production. After deployment, the production login page contains the expected form and all four private production routes redirect signed-out requests to `/login`. Owner: confirmed Stage 1.2 mobile navigation and that the first magic link reached the old production app. Untested: browser callback/session and sign-out locally and live.
 - **Problems & how they were resolved:** Next.js 16 Cache Components rejected direct `searchParams` access during login prerendering; moved the dynamic login notice behind Suspense. Next.js also rejected a non-function export from a `use server` module at form-submit time; moved the login state into `login/state.ts`. The first magic link fell back to production because localhost was absent from Supabase's redirect allow-list; the owner added localhost and production wildcard entries, and an admin-generated link confirmed localhost is now accepted. Further email testing hit Supabase's built-in two-emails-per-hour quota.
-- **Commit / tag:** `stage 1.3: login` checkpoint created; manual end-to-end verification remains pending.
-- **Exact next step:** Create and deploy the `stage 1.3: login` checkpoint, then request one fresh link after the quota resets and verify local and live callback/session/sign-out behavior before starting Stage 1.4.
+- **Commit / tag:** `0bd5049` (`stage 1.3: login`), pushed to `origin/main` and deployed; manual end-to-end verification remains pending.
+- **Exact next step:** Request one fresh link after the quota resets and verify local and live callback/session/sign-out behavior. Then disable new-user signup in Supabase before starting Stage 1.4.
 
 ### 2026-10-11 — Stage 1.2 deployed
 - **Date:** 2026-10-11
