@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import Nav from "@/components/Nav";
+import SignOutButton from "@/components/SignOutButton";
 
 export const metadata: Metadata = {
   title: "muziqobbiz",
@@ -19,8 +20,9 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full antialiased">
       <body className="flex min-h-full flex-col">
-        <header className="sticky top-0 z-10 border-b border-zinc-800 bg-zinc-950/90 px-4 py-3 backdrop-blur">
+        <header className="sticky top-0 z-10 flex items-center justify-between border-b border-zinc-800 bg-zinc-950/90 px-4 py-3 backdrop-blur">
           <span className="text-lg font-semibold tracking-tight">muziqobbiz</span>
+          <SignOutButton />
         </header>
         <div className="flex flex-1 flex-col md:flex-row">
           <Nav />

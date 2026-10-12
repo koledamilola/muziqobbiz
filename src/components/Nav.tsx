@@ -8,6 +8,8 @@ import { NAV_ITEMS } from "./nav-items";
 export default function Nav() {
   const pathname = usePathname();
 
+  if (pathname === "/login") return null;
+
   return (
     <nav
       aria-label="Main"
