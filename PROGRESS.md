@@ -6,11 +6,11 @@ Every agent reads this at the start of a session and updates it at the end. The 
 
 ## Current status
 
-- **Current stage / step:** Stage 1.3 deployed — signed-out protection verified locally and live; manual owner callback/sign-out verification pending
+- **Current stage / step:** Stage 1.3 deployed — owner confirms production login and sign-out; new-user signup disabled. Phone login and sign-out also confirmed. Follow-up fixes prepared for publication; localhost authentication remains unverified.
 - **App URL (production):** https://muziqobbiz.vercel.app
 - **Last working checkpoint (git tag or commit):** `0bd5049` (`stage 1.3: login`), pushed to `origin/main` and deployed to production
-- **Next step:** Complete local and live owner-login/sign-out verification when the Supabase email quota resets, then disable new-user signup and begin Stage 1.4
-- **Blockers:** Supabase's built-in email provider is temporarily rate-limited to two auth emails per hour, so another end-to-end magic-link test cannot run yet
+- **Next step:** Commit and push the reviewed Stage 1.3 fixes, then begin Stage 1.4 database and storage. Owner authorized proceeding on production and phone evidence; localhost authentication is deferred.
+- **Blockers:** No current production login failure reported. Localhost authentication remains unverified; the October 11 rate-limit failure is historical. Owner approved proceeding after successful production and phone checks.
 
 ---
 
@@ -47,7 +47,7 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | Item | Stage | Status | Notes |
 |---|---|---|---|
 | `next dev` appends a "Next.js agent rules" block to AGENTS.md every time it runs | 1 | Open | Reverted each time to keep the owner's rulebook untouched. Owner to decide: keep the block, or ignore it |
-| Magic-link callback and sign-out with a real email | 1.3 | Partially tested | Real keys, owner form submission, non-owner rejection, signed-out redirects locally and live, deployed login form, and localhost redirect allow-list pass. The browser callback/session and sign-out still need confirmation after the email quota resets. |
+| Magic-link callback and sign-out with a real email | 1.3 | Production owner-confirmed | Owner confirms production login opens the studio and Sign out returns to `/login`. The same login/sign-out test also passed on the owner's phone. Localhost authentication remains unverified. Owner confirms new-user signup disabled on 2026-10-21. |
 
 ---
 
@@ -63,6 +63,30 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 ---
 
 ## Session log (newest first)
+
+### 2026-10-21 — Phone verification and publication of login fixes
+- **Owner evidence:** Owner confirms the same production login/sign-out test passes on a phone, confirms signup is disabled, and explicitly requests committing and pushing all pending changes before moving forward.
+- **What changed:** Successful login redirects only to the studio. Login messages explain rate limits and opening the newest link in the same browser/device. Recorded the owner's desktop and phone confirmations.
+- **Validation:** Lint, typecheck, and production build passed again. The sandbox blocked a build worker; the identical build passed with normal process permissions. `.env.local` remains ignored and is excluded from the commit.
+- **Remaining limitation:** Localhost browser authentication is unverified and deferred with the owner's go-ahead; production and phone evidence does not verify localhost. No hosted settings or database schema changed.
+- **Commit:** `stage 1.3: clarify magic-link login and restrict redirects`.
+- **Exact next step:** Push this reviewed checkpoint to `origin/main`; Stage 1.4 database and storage follows. Deployment of these follow-up edits is not yet verified at this checkpoint.
+
+### 2026-10-21 — Owner confirms production authentication and signup restriction
+- **Owner evidence:** Production magic-link login opens the studio; Sign out returns to `/login`. Owner also confirms that Allow new users to sign up is now disabled in Supabase.
+- **What changed:** Updated the current status and known issues to reflect these confirmations. No code or hosted settings changed in this update.
+- **Validation:** Documentation diff checked. The October 20 code changes already passed lint, typecheck and build; checks were not repeated for this documentation-only update.
+- **Still pending:** Local/phone authentication checks and committing/deploying the prepared login-message and redirect fixes. Stage 1.3 is not yet marked fully complete.
+- **Exact next step:** Complete those checks and publish the reviewed fixes, then begin Stage 1.4 database and storage.
+
+### 2026-10-20 — Stage 1.3 verification and login fixes
+- **What was done:** Reviewed the existing Stage 1.3 implementation and Supabase SSR/PKCE documentation. Restricted successful callback navigation to the studio, removing user-controlled redirect destinations. Added a clear HTTP 429 message and same-browser/device instructions after requesting a magic link.
+- **Tested:** Lint, typecheck, and production build pass. The sandbox blocked the build worker; the permitted build outside it passed. Live `/login` returns 200; all four private pages return 307 to login; a callback without a code redirects to the login error state. These live checks cover the existing deployment, not the new local edits.
+- **Testing correction:** Earlier terminal-initiated email requests did not put the PKCE verifier cookie in the owner's browser and cannot validate the owner's callback. Request the link from the actual browser login form and open it in that same browser/device. No email was sent during this session.
+- **Docs:** https://supabase.com/docs/guides/auth/sessions/pkce-flow and https://supabase.com/docs/guides/auth/server-side/creating-a-client checked 2026-10-20; current changelog reviewed.
+- **Still pending:** Owner login/callback/sign-out locally and live, phone confirmation, signup-disable confirmation. Stage 1.3 is not marked complete.
+- **Commit:** Local changes prepared; proposed message `stage 1.3: clarify magic-link login and restrict redirects`.
+- **Exact next step:** Test production login/logout in the same browser. Run `npm run dev` for the localhost test and request its link from localhost. Commit and deploy the reviewed fixes, then confirm the remaining owner checks before Stage 1.4.
 
 ### 2026-10-11 — Stage 1.3 login implementation
 - **Date:** 2026-10-11

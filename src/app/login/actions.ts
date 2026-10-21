@@ -44,13 +44,17 @@ export async function requestMagicLink(
     if (error) {
       return {
         status: "error",
-        message: "We could not send the sign-in link. Please try again.",
+        message: error.status === 429
+          ? "Too many sign-in requests. Please wait before requesting another link."
+          : "We could not send the sign-in link. Please try again.",
       };
     }
 
     return {
       status: "success",
-      message: "Check your email for a secure sign-in link.",
+      // PKCE requires the verifier cookie from the browser that requested it.
+      // https://supabase.com/docs/guides/auth/sessions/pkce-flow
+      message: "Check your email and open the newest sign-in link in this same browser on this device.",
     };
   } catch {
     return {
