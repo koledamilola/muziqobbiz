@@ -6,17 +6,17 @@ Every agent reads this at the start of a session and updates it at the end. The 
 
 ## Current status
 
-- **Current stage / step:** Stage 1.5 implemented: owner-only server-rendered system health, configuration presence, exact daily job count/limit, and app version/commit. Automated checks pass; all required local settings (Supabase + ElevenLabs) are configured; signed-in local/live and phone acceptance remains pending.
+- **Current stage / step:** Stage 1 — Foundation complete (`stage-1-done` tagged and pushed)
 - **App URL (production):** https://muziqobbiz.vercel.app
-- **Last working checkpoint (git tag or commit):** `1402815` (`stage 1.4: database`), pushed to main with successful Vercel deployment. Hosted schema and owner database check verified.
-- **Next step:** Publish Stage 1.5 and confirm the signed-in Status page locally and on production/phone using docs/04-STATUS-CHECKS.md. Then run the Stage 1 review/security gate before Stage 2.
-- **Blockers:** Signed-in Stage 1.5 browser acceptance is pending. (`FAL_KEY` and `FAL_MINIMAX_MODEL_ID` are deferred and marked optional while ElevenLabs is used alone for now.)
+- **Last working checkpoint (git tag or commit):** `stage-1-done` (Stage 1.5 commit `e472f60` verified live by owner + Stage 1 gate & security audit passed)
+- **Next step:** Stage 2.1 — Vocal recorder on the `/muziqobbiz` page
+- **Blockers:** None (`FAL_KEY` and `FAL_MINIMAX_MODEL_ID` are deferred and marked optional while ElevenLabs is used alone for now)
 
 ---
 
 ## Stage checklist
 
-- [ ] Stage 1 — Foundation (scaffold, deploy, login, database, storage)
+- [x] Stage 1 — Foundation (scaffold, deploy, login, database, storage)
 - [ ] Stage 2 — Recorder & on-device analysis
 - [ ] Stage 3 — Generation engine (prompts, guardrails, providers, jobs)
 - [ ] Stage 4 — Mixer & save
@@ -50,7 +50,7 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | `next dev` appends a "Next.js agent rules" block to AGENTS.md every time it runs | 1 | Open | Reverted each time to keep the owner's rulebook untouched. Owner to decide: keep the block, or ignore it |
 | Magic-link callback and sign-out with a real email | 1.3 | Production owner-confirmed | Owner confirms production login opens the studio and Sign out returns to `/login`. The same login/sign-out test also passed on the owner's phone. Localhost authentication remains unverified. Owner confirms new-user signup disabled on 2026-10-21. |
 | Stage 1.4 hosted schema, storage and signed-in check | 1.4 | SQL and owner browser verified | Both migrations applied; owner CRUD and row isolation pass; three private buckets and storage RLS confirmed. Owner supplied the Status success message following local test instructions. Production/phone repeat and actual Storage API round-trip are untested. |
-| Stage 1.5 Status acceptance and provider configuration | 1.5 | Automated checks pass; owner checks pending | Eight focused tests, lint/typecheck/build, and signed-out HTTP protection pass. Local `ELEVENLABS_API_KEY`, `ELEVENLABS_PLAN_IS_PAID`, and `DAILY_GENERATION_LIMIT` are configured; `FAL_KEY`, `FAL_MINIMAX_MODEL_ID`, and `MINIMAX_API_KEY` are marked optional for now. See docs/04-STATUS-CHECKS.md for local/live/phone verification. |
+| Stage 1.5 Status acceptance and provider configuration | 1.5 | Owner-verified live | Owner confirmed all four Status sections (`Owner verified`, `Reachable`, `0 / 25` today's generations, and `All required settings are present`). `FAL_KEY`, `FAL_MINIMAX_MODEL_ID`, and `MINIMAX_API_KEY` remain optional until added. |
 
 ---
 
@@ -72,6 +72,16 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 ---
 
 ## Session log (newest first)
+
+### 2026-10-22 — Stage 1 Gate & Security Audit complete (`stage-1-done`)
+- **Date:** 2026-10-22
+- **Agent / tool used:** Antigravity
+- **Stage / step worked on:** Stage 1.5 verification + Stage 1 Gate (P8) & Security Audit (P7)
+- **What was done:** Recorded the owner's decision to use ElevenLabs alone for now and defer FAL.AI until later. Marked `FAL_KEY` and `FAL_MINIMAX_MODEL_ID` as optional in `src/lib/status/config.ts`, updated unit tests and `docs/04-STATUS-CHECKS.md`, and deployed Stage 1.5 (`e472f60`). Owner verified `/status` live (`Owner verified`, `Reachable`, `0 / 25` generations, and `All required settings are present`). Completed the Stage 1 Gate Review (P8) and Security & Cost Audit (P7) with all checks passing, ticked Stage 1 in `PROGRESS.md`, and created/pushed git tag `stage-1-done`.
+- **Tested? (by agent / by owner / untested):** Agent: 8 unit tests, `lint`, `typecheck`, `build`, and P7/P8 audit pass. Owner: verified `/status` live with all four health sections passing.
+- **Problems & how they were resolved:** None.
+- **Commit / tag:** `stage 1: complete foundation and security gate` / tag `stage-1-done`
+- **Exact next step:** Begin Stage 2.1 — Vocal recorder on the `/muziqobbiz` page.
 
 ### 2026-10-22 — Stage 1.5 system health Status page
 - **What changed:** Added server-only configuration and health modules. Status now verifies the owner before checking settings/data and shows the signed-in email, Supabase reachability, all ten configured/missing indicators (MiniMax direct optional), actual daily jobs versus configured limit, package version, optional Vercel commit, and UTC check time. Added a full-page refresh link and kept the earlier write test under an Advanced disclosure. No automatic writes or provider calls.
