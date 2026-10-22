@@ -23,13 +23,13 @@ export const SUPPORTED_RECORDING_MIME_TYPES = [
 // Browser echoCancellation and autoGainControl are built for speakerphone calls
 // and aggressively pump or hollow out singing. We keep them OFF and use our own
 // musical Web Audio vocal chain + smooth noise reduction instead.
-export function buildVocalAudioConstraints(options?: {
-  noiseSuppression?: boolean;
-}): MediaTrackConstraints {
+export function buildVocalAudioConstraints(): MediaTrackConstraints {
   return {
     channelCount: 1,
     echoCancellation: false,
-    noiseSuppression: Boolean(options?.noiseSuppression),
+    // A speech filter can gate pauses but reopen hiss with every sung note,
+    // making the learned room profile unreliable. Denoise the decoded take instead.
+    noiseSuppression: false,
     autoGainControl: false,
   };
 }
@@ -283,9 +283,8 @@ export function cleanAndNormalizeSamples(
       let gateGain = 1;
       if (envelope < gateThreshold) {
         const ratio = envelope / gateThreshold;
-        // Soft quadratic expansion down to 0.22 (-13 dB floor) so background noise
-        // drops away smoothly without unnatural "dead air" clicks.
-        gateGain = 0.22 + 0.78 * (ratio * ratio);
+        // A smooth, deeper floor keeps residual hiss down after normalization.
+        gateGain = 0.035 + 0.965 * (ratio * ratio);
       }
 
       const gated = sample * gateGain;
@@ -379,9 +378,10 @@ export async function decodeRecordingBlob(
   blob: Blob,
   audioContext: AudioContext,
   options?: {
-    noiseGate?: boolean;
+    noiseReduction?: boolean;
     normalize?: boolean;
     highPass?: boolean;
+    signal?: AbortSignal;
   },
 ): Promise<AudioBuffer> {
   if (audioContext.state === "suspended") {
@@ -407,10 +407,20 @@ export async function decodeRecordingBlob(
       }
     }
 
+    const reduceNoise = options?.noiseReduction ?? true;
+    let samples: Float32Array = monoInput;
+    let normalize = options?.normalize ?? true;
+    if (reduceNoise) {
+      const { reduceNoiseInWorker } = await import("./noise-reduction-client");
+      const result = await reduceNoiseInWorker(monoInput, rawBuffer.sampleRate, options?.signal);
+      samples = result.samples;
+      // Never maximize a room-noise-only take into loud hiss.
+      normalize = normalize && result.hasVoice;
+    }
     const cleaned = cleanAndNormalizeSamples(
-      monoInput,
+      samples,
       rawBuffer.sampleRate,
-      options,
+      { ...options, noiseGate: reduceNoise, normalize },
     );
     const enhancedBuffer = audioContext.createBuffer(
       1,

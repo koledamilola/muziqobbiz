@@ -4,12 +4,13 @@ import vm from "node:vm";
 import test from "node:test";
 import ts from "typescript";
 
-function loadAudioModule(relativePath) {
+function loadAudioModule(relativePath, globals = {}) {
   const source = readFileSync(
     new URL(relativePath, import.meta.url),
     "utf8",
   );
-  const { outputText } = ts.transpileModule(source, {
+  // Emulate ESM's module URL for browser-worker modules inside this CommonJS VM.
+  const { outputText } = ts.transpileModule(source.replaceAll("import.meta.url", '"file:///test-module.js"'), {
     compilerOptions: {
       module: ts.ModuleKind.CommonJS,
       target: ts.ScriptTarget.ES2022,
@@ -18,7 +19,7 @@ function loadAudioModule(relativePath) {
   const exports = {};
   vm.runInNewContext(
     outputText,
-    { exports, Math, Number, String, Array, Object, Float32Array, ArrayBuffer, DataView, Blob },
+    { exports, Math, Number, String, Array, Object, Float32Array, Float64Array, Uint32Array, ArrayBuffer, DataView, Blob, URL, DOMException, setTimeout, clearTimeout, ...globals },
     { filename: relativePath },
   );
   return exports;
@@ -26,18 +27,132 @@ function loadAudioModule(relativePath) {
 
 const recorder = loadAudioModule("../src/lib/audio/recorder.ts");
 const metronome = loadAudioModule("../src/lib/audio/metronome.ts");
+const noiseReduction = loadAudioModule("../src/lib/audio/noise-reduction.ts");
 
-test("buildVocalAudioConstraints requests mono capture and toggles noise suppression", () => {
+function rms(samples, start = 0, end = samples.length) {
+  let power = 0;
+  for (let i = start; i < end; i++) power += samples[i] * samples[i];
+  return Math.sqrt(power / (end - start));
+}
+
+function makeNoisyVocal(rate, seconds = 2) {
+  const clean = new Float32Array(rate * seconds);
+  const noisy = new Float32Array(clean.length);
+  let seed = 42;
+  for (let i = 0; i < noisy.length; i++) {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    const time = i / rate;
+    if (time > 0.3 && time < seconds - 0.3) {
+      clean[i] = 0.1 * Math.sin(2 * Math.PI * 220 * time)
+        + 0.04 * Math.sin(2 * Math.PI * 440 * time)
+        + 0.02 * Math.sin(2 * Math.PI * 880 * time);
+    }
+    noisy[i] = clean[i] + (seed / 2 ** 32 - 0.5) * 0.02;
+  }
+  return { clean, noisy };
+}
+
+test("spectral reduction removes broadband hiss between and during vocals without changing timing", () => {
+  for (const rate of [16000, 44100, 48000]) {
+    const { clean, noisy } = makeNoisyVocal(rate);
+    const { samples: output, hasVoice } = noiseReduction.reduceSteadyNoise(noisy, rate);
+    assert.equal(output.length, noisy.length);
+    assert.equal(hasVoice, true);
+    const start = Math.floor(rate * 0.6);
+    const end = Math.floor(rate * 1.4);
+    const residual = Float32Array.from(output, (value, i) => value - clean[i]);
+    const originalNoise = Float32Array.from(noisy, (value, i) => value - clean[i]);
+    const pauseRatio = rms(output, rate * 0.1, rate * 0.2) / rms(noisy, rate * 0.1, rate * 0.2);
+    const vocalRatio = rms(residual, start, end) / rms(originalNoise, start, end);
+    assert.ok(pauseRatio < 0.4, `pause hiss ratio ${pauseRatio} at ${rate}`);
+    assert.ok(vocalRatio < 0.65, `vocal hiss ratio ${vocalRatio} at ${rate}`);
+    assert.ok(rms(output, start, end) > rms(clean, start, end) * 0.94);
+    assert.ok(output.every(Number.isFinite));
+  }
+});
+
+test("a sustained sung note without a quiet intro is preserved", () => {
+  const rate = 48000;
+  const input = Float32Array.from({ length: rate }, (_, i) => 0.1 * Math.sin(2 * Math.PI * 220 * i / rate));
+  const { samples, hasVoice } = noiseReduction.reduceSteadyNoise(input, rate);
+  assert.equal(hasVoice, true);
+  assert.ok(rms(samples) > rms(input) * 0.95);
+});
+
+test("silence and noise-only takes are not classified as vocals for auto boost", () => {
+  assert.equal(noiseReduction.reduceSteadyNoise(new Float32Array(4800), 48000).hasVoice, false);
+  const { noisy } = makeNoisyVocal(16000, 0.5);
+  const { samples, hasVoice } = noiseReduction.reduceSteadyNoise(noisy, 16000);
+  assert.equal(hasVoice, false);
+  assert.ok(rms(samples) < rms(noisy) * 0.4);
+  assert.equal(noiseReduction.reduceSteadyNoise(new Float32Array(10), 48000).samples.length, 10);
+});
+
+test("noise worker returns its result and terminates on success, failure and cancellation", async () => {
+  const workers = [];
+  const current = () => workers.at(-1);
+  class FakeWorker {
+    stopped = false;
+    constructor() { workers.push(this); }
+    postMessage(message, transfers) {
+      assert.equal(transfers[0], message.samples.buffer);
+    }
+    terminate() { this.stopped = true; }
+  }
+  const { reduceNoiseInWorker } = loadAudioModule("../src/lib/audio/noise-reduction-client.ts", { Worker: FakeWorker });
+  const samples = new Float32Array(128);
+  const success = reduceNoiseInWorker(samples, 48000);
+  current().onmessage({ data: { samples, hasVoice: true } });
+  assert.equal((await success).samples, samples);
+  assert.equal(current().stopped, true);
+  const failure = reduceNoiseInWorker(samples, 48000);
+  current().onerror();
+  await assert.rejects(failure, { name: "NoiseReductionError" });
+  assert.equal(current().stopped, true);
+  const controller = new AbortController();
+  const cancelled = reduceNoiseInWorker(samples, 48000, controller.signal);
+  controller.abort();
+  await assert.rejects(cancelled, { name: "AbortError" });
+  assert.equal(current().stopped, true);
+});
+
+test("decode applies hiss reduction before loudness processing and does not boost noise-only takes", async () => {
+  const { noisy } = makeNoisyVocal(16000, 0.5);
+  let calls = 0;
+  const audioModule = loadAudioModule("../src/lib/audio/recorder.ts", {
+    require: (name) => {
+      assert.equal(name, "./noise-reduction-client");
+      return { reduceNoiseInWorker: (input, rate) => {
+        calls++;
+        return noiseReduction.reduceSteadyNoise(input, rate);
+      } };
+    },
+  });
+  const rawBuffer = { numberOfChannels: 1, length: noisy.length, sampleRate: 16000, getChannelData: () => noisy };
+  const context = {
+    state: "running",
+    decodeAudioData: async () => rawBuffer,
+    createBuffer: (_, length, sampleRate) => {
+      const data = new Float32Array(length);
+      return { length, sampleRate, getChannelData: () => data };
+    },
+  };
+  const blob = new Blob(["audio"]);
+  const reduced = await audioModule.decodeRecordingBlob(blob, context);
+  assert.equal(calls, 1);
+  assert.ok(rms(reduced.getChannelData(0)) < rms(noisy) * 0.4);
+  await audioModule.decodeRecordingBlob(blob, context, { noiseReduction: false });
+  assert.equal(calls, 1, "off must bypass the noise worker");
+});
+
+test("buildVocalAudioConstraints requests mono vocals without speech-call filters", () => {
   assert.equal(recorder.MAX_RECORDING_SECONDS, 180);
 
-  const withNoiseReduction = recorder.buildVocalAudioConstraints({
-    noiseSuppression: true,
-  });
-  assert.equal(withNoiseReduction.echoCancellation, false);
-  assert.equal(withNoiseReduction.channelCount, 1);
-  assert.equal(withNoiseReduction.autoGainControl, false);
-  assert.equal(withNoiseReduction.noiseSuppression, true);
-  assert.equal(recorder.buildVocalAudioConstraints().noiseSuppression, false);
+  const constraints = recorder.buildVocalAudioConstraints();
+  assert.equal(constraints.echoCancellation, false);
+  assert.equal(constraints.channelCount, 1);
+  assert.equal(constraints.autoGainControl, false);
+  assert.equal(constraints.noiseSuppression, false);
 });
 
 test("a short loud bump does not leave a quiet vocal take inaudible or clip it", () => {

@@ -6,10 +6,10 @@ Every agent reads this at the start of a session and updates it at the end. The 
 
 ## Current status
 
-- **Current stage / step:** Stage 2.2 — Recorder audio and interface polish; owner phone/desktop verification pending
+- **Current stage / step:** Stage 2.2 — Steady-hiss reduction implemented; owner headset listening test pending
 - **App URL (production):** https://muziqobbiz.vercel.app
-- **Last working checkpoint (git tag or commit):** `stage 2.2: improve vocal capture and studio theme` (automated checks pass; owner verification pending)
-- **Next step:** Verify a quiet wired-headset vocal and metronome count-in on phone and desktop, then start Stage 2.3 — On-device analysis with `essentia.js`
+- **Last working checkpoint (git tag or commit):** `stage 2.2: reduce recorded vocal hiss` (automated and isolated browser checks pass; owner listening test pending)
+- **Next step:** Record a fresh wired-headset take with noise reduction enabled and a short quiet pause before singing; compare hiss and vocal tone on phone and desktop, then start Stage 2.3 — On-device analysis with `essentia.js`
 - **Blockers:** None (`FAL_KEY` and `FAL_MINIMAX_MODEL_ID` are deferred and marked optional while ElevenLabs is used alone for now)
 
 ---
@@ -52,7 +52,7 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | Stage 1.4 hosted schema, storage and signed-in check | 1.4 | SQL and owner browser verified | Both migrations applied; owner CRUD and row isolation pass; three private buckets and storage RLS confirmed. Owner supplied the Status success message following local test instructions. Production/phone repeat and actual Storage API round-trip are untested. |
 | Stage 1.5 Status acceptance and provider configuration | 1.5 | Owner-verified live | Owner confirmed all four Status sections (`Owner verified`, `Reachable`, `0 / 25` today's generations, and `All required settings are present`). `FAL_KEY`, `FAL_MINIMAX_MODEL_ID`, and `MINIMAX_API_KEY` remain optional until added. |
 | Stage 2.1 Vocal recorder browser/phone verification | 2.1 | Owner-verified | Owner confirmed recording, Play take, Retake, and Keep take all work as expected. |
-| Stage 2.2 recorder and metronome verification | 2.2 | Automated checks pass; owner audio/UI test pending | 23 tests, lint, typecheck, and build pass. Needs owner verification on phone and desktop of wired-headset mic choice, quieter room noise, stronger kept take, steady click, count-in, and readable new theme. Browser noise suppression may be unavailable or may soften sung notes. |
+| Stage 2.2 recorder and metronome verification | 2.2 | Automated and isolated browser checks pass; owner listening test pending | 28 tests, lint, typecheck, build, and generated-audio Chrome record/worker/play/keep check pass. Owner heard residual white hiss after the previous release; new spectral reduction precedes loudness boost and browser speech suppression is off. Real headset listening, Safari/mobile, click/count-in isolation, and visual acceptance remain pending. |
 
 ---
 
@@ -73,10 +73,19 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | MDN Web Audio & MediaRecorder | https://developer.mozilla.org/en-US/docs/Web/API/MediaRecorder and https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/decodeAudioData | 2026-10-22 | Detect `audio/webm` (Opus) vs `audio/mp4` (AAC) via `MediaRecorder.isTypeSupported`; disable `echoCancellation`, `noiseSuppression`, and `autoGainControl` for singing; resume `AudioContext` on user tap and decode every take to an `AudioBuffer` |
 | MDN Web Audio Clock Scheduling | https://developer.mozilla.org/en-US/docs/Web/API/AudioContext/currentTime and https://developer.mozilla.org/en-US/docs/Web/API/OscillatorNode | 2026-10-22 | Schedule metronome clicks ahead on `audioContext.currentTime` (lookahead window) with `OscillatorNode` + `GainNode` ramps so timing never jitters with `setTimeout` |
 | MDN processed audio capture | https://developer.mozilla.org/en-US/docs/Web/API/AudioContext/createMediaStreamDestination and https://developer.mozilla.org/en-US/docs/Web/API/DynamicsCompressorNode and https://developer.mozilla.org/en-US/docs/Web/API/MediaStreamTrack/getSettings | 2026-10-22 | Record from the processed Web Audio graph; put mic gain before compression; inspect active microphone and browser noise-suppression setting. |
+| Audacity noise reduction / MDN workers | https://manual.audacityteam.org/man/noise_reduction.html and https://manual.audacityteam.org/man/alternative_noise_reduction_techniques.html and https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects | 2026-10-22 | A gate addresses pauses; spectral noise reduction addresses steady hiss under vocals. Avoid excessive reduction and musical-noise artifacts. Transfer the mono buffer to a dedicated worker and terminate it on completion, failure, timeout, or cancellation. |
 
 ---
 
 ## Session log (newest first)
+
+### 2026-10-22 — Stage 2.2 steady-hiss reduction
+- **Owner feedback:** Residual white noise remained audible in recorded vocal playback after the previous polish release.
+- **What changed:** Added a dependency-free spectral denoiser that estimates a broadband noise profile from quieter frames, protects narrow vocal harmonics, and smooths its frequency gains across time and nearby bands. The dedicated worker runs before gating, normalization, WAV encoding, and playback; the gate now has a deeper floor and noise-only takes are not auto-boosted. Kept browser speech-call suppression off for singing so it cannot gate only the pauses and invalidate the noise estimate. Added a short quiet-pause hint and worker cancellation/error/timeout cleanup.
+- **Verification:** All 28 tests, lint, typecheck, and production build pass. Synthetic tests cover 16/44.1/48 kHz hiss in pauses and under vocals, continuous notes without a silent intro, silence/noise-only takes, worker success/failure/abort, decoder processing order, and opt-out. A three-minute 48 kHz synthetic take processed in 2.82 s on the agent machine, with 13.5 dB pause-hiss reduction; this is not a headset measurement. Final built assets passed an isolated local headless Chrome generated-audio check: Record → MediaRecorder/decode → actual bundled worker response (120,960 samples) → enhanced WAV → Play → Keep.
+- **Limits / untested:** Actual owner headset quality and mobile/Safari still need listening tests. No promise of perfect removal when noise overlaps the voice. New processing applies to new takes; existing takes are not reprocessed. Local browser fixture used static built assets and generated audio, so it does not verify hosted login or deployment. Initial sandboxed Chrome launch timed out; the same check passed with normal process permissions. No dependencies, paid services, database changes, or audio uploads added.
+- **Commit / tag:** `stage 2.2: reduce recorded vocal hiss`
+- **Exact next step:** Owner records a fresh take with noise reduction on and a short quiet lead-in, checks hiss in pauses and under sung notes on phone/desktop, then repeats with reduction off if vocal tone sounds altered. Continue to Stage 2.3 after listening acceptance.
 
 ### 2026-10-22 — Stage 2.2 recorder cleanup and studio palette
 - **Date:** 2026-10-22

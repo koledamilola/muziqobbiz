@@ -60,7 +60,6 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
   const [elapsedSec, setElapsedSec] = useState(0);
   const [inputLevel, setInputLevel] = useState(0);
   const [activeMicLabel, setActiveMicLabel] = useState<string | null>(null);
-  const [browserNoiseSuppression, setBrowserNoiseSuppression] = useState<boolean | null>(null);
   const [micError, setMicError] = useState<MicErrorInfo | null>(null);
   const [decodeError, setDecodeError] = useState<string | null>(null);
   const [take, setTake] = useState<RecordedTake | null>(null);
@@ -90,6 +89,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
+  const processingAbortRef = useRef<AbortController | null>(null);
   const recordStartContextTimeRef = useRef<number>(0);
   const reachedMaxRef = useRef<boolean>(false);
   const cancelledDuringCountInRef = useRef<boolean>(false);
@@ -185,7 +185,6 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
     }
     setInputLevel(0);
     setActiveMicLabel(null);
-    setBrowserNoiseSuppression(null);
     setBeatDisplay(null);
   }, []);
 
@@ -222,6 +221,8 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
 
   useEffect(() => {
     return () => {
+      cancelledDuringCountInRef.current = true;
+      processingAbortRef.current?.abort();
       stopClickPreview();
       stopPlayback(true);
       stopMicStream();
@@ -335,19 +336,13 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
       // Start or resume AudioContext directly inside the user tap handler (AGENTS.md rule 14).
       const audioContext = await ensureAudioContext();
 
-      // Request mono vocal input. Echo cancellation and autoGainControl stay OFF
-      // so sustained singing notes are not hollowed out; optional noiseSuppression
-      // can be enabled alongside our Web Audio vocal clarity chain.
+      // Keep speech-call filters off; steady hiss is removed from the decoded
+      // vocal in our worker, with one consistent profile during notes and pauses.
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: buildVocalAudioConstraints({
-          noiseSuppression: noiseReductionEnabled,
-        }),
+        audio: buildVocalAudioConstraints(),
       });
       mediaStreamRef.current = stream;
       setActiveMicLabel(stream.getAudioTracks()[0]?.label || "Default microphone");
-      setBrowserNoiseSuppression(
-        stream.getAudioTracks()[0]?.getSettings().noiseSuppression ?? null,
-      );
 
       const capture = createVocalCaptureGraph(audioContext, stream, micBoost);
       captureNodesRef.current = capture.nodes;
@@ -369,7 +364,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
       const useClick = metronomeEnabled;
       const lockedBpm = clampMetronomeBpm(bpm);
       metronomeBpmRef.current = lockedBpm;
-      const useNoiseGate = noiseReductionEnabled;
+      const useNoiseReduction = noiseReductionEnabled;
       const useAutoNormalize = autoNormalizeEnabled;
 
       recorder.ondataavailable = (event: BlobEvent) => {
@@ -394,6 +389,8 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
         }
 
         setPhase("decoding");
+        const processing = new AbortController();
+        processingAbortRef.current = processing;
 
         try {
           const actualMimeType = recorder.mimeType || preferredMimeType || "";
@@ -406,10 +403,12 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
 
           const ctx = await ensureAudioContext();
           const audioBuffer = await decodeRecordingBlob(blob, ctx, {
-            noiseGate: useNoiseGate,
+            noiseReduction: useNoiseReduction,
             normalize: useAutoNormalize,
             highPass: false,
+            signal: processing.signal,
           });
+          if (processing.signal.aborted) return;
           const enhancedBlob = encodeWavBlob(audioBuffer);
           const channelData = audioBuffer.getChannelData(0);
           const peaks = computeWaveformPeaks(channelData);
@@ -432,11 +431,16 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
           playbackOffsetSecRef.current = 0;
           setPlaybackSec(0);
           setPhase("review");
-        } catch {
+        } catch (error) {
+          if (processing.signal.aborted) return;
           setDecodeError(
-            "Could not decode that audio take. Please record a slightly longer take and try again.",
+            error instanceof Error && error.name === "NoiseReductionError"
+              ? error.message
+              : "Could not decode that audio take. Please record a slightly longer take and try again.",
           );
           setPhase("idle");
+        } finally {
+          if (processingAbortRef.current === processing) processingAbortRef.current = null;
         }
       };
 
@@ -693,7 +697,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
               Vocal Clarity &amp; Volume Boost
             </h3>
             <span className="text-xs text-emerald-300">
-              85 Hz rumble cut · 3.2 kHz clarity EQ · Soft noise gate
+              Rumble filter · Hiss reduction · Vocal level control
             </span>
           </div>
 
@@ -710,7 +714,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
                 <strong className="block font-medium text-zinc-100">
                   Noise reduction &amp; clarity
                 </strong>
-                Reduces steady noise and pauses; works best in a quiet room
+                Reduces steady hiss while you sing and quietens pauses
               </span>
             </label>
 
@@ -756,6 +760,9 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
               />
             </div>
           </div>
+          <p className="mt-3 text-xs text-zinc-400">
+            Leave a short quiet pause before singing so noise reduction can learn the room sound.
+          </p>
         </div>
 
         {/* Optional Metronome & 1-Bar Count-In Panel (Stage 2.2) */}
@@ -1027,9 +1034,6 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
               {activeMicLabel ? (
                 <p className="mt-1 text-left text-xs text-zinc-400">
                   Recording from: {activeMicLabel}
-                  {noiseReductionEnabled && browserNoiseSuppression === false
-                    ? " · Browser noise suppression unavailable; soft gate remains on"
-                    : ""}
                 </p>
               ) : null}
               <div
