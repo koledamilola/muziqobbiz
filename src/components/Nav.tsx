@@ -18,9 +18,11 @@ export default function Nav() {
       <ul className="flex md:flex-col md:gap-1 md:p-3">
         {NAV_ITEMS.map((item) => {
           const active = pathname === item.href;
+          // Fetch the Library afresh, including takes saved since a previous visit.
+          const NavigationLink = item.href === "/library" ? "a" : Link;
           return (
             <li key={item.href} className="flex-1 md:flex-none">
-              <Link
+              <NavigationLink
                 href={item.href}
                 aria-current={active ? "page" : undefined}
                 className={`flex min-h-14 flex-col items-center justify-center gap-0.5 border-t-2 text-xs transition-colors md:min-h-11 md:flex-row md:justify-start md:gap-3 md:rounded-lg md:border-t-0 md:border-l-2 md:px-3 md:text-sm ${
@@ -33,7 +35,7 @@ export default function Nav() {
                   {item.icon}
                 </span>
                 {item.label}
-              </Link>
+              </NavigationLink>
             </li>
           );
         })}

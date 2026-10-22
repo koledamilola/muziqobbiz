@@ -11,7 +11,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --test-isolation=none tests/analysis-engine.test.mjs tests/stage2.test.mjs tests/recorder.test.mjs tests/status.test.mjs"
+    "test": "node --test --test-isolation=none tests/analysis-engine.test.mjs tests/stage2.test.mjs tests/recorder.test.mjs tests/status.test.mjs tests/library.test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",

@@ -9,11 +9,11 @@ The owner has authorized publishing the verified implementation to main, superse
 3. Wait for analysis. Tempo, key, and energy should appear without freezing the page. Try a song whose key you know. These are estimates on solo vocals; an unknown or related key can happen.
 4. Edit BPM, select one of the 24 major/minor keys, and change energy. Each edited field should say **Set by you**. Empty BPM/key means unknown; valid tempo is 40–250 BPM.
 5. Before saving, click Library. Expect a warning; cancel it and confirm the take remains. Reloading/closing the tab and signing out also warn while unsaved. Browser Back behavior can vary; save before using browser history controls.
-6. Click **Keep & save take**. Expect upload progress, then **Take saved ✓**, a title, and a player for the stored vocal. Play it. Retake is disabled during saving so a pending save cannot be accidentally discarded.
+6. Click **Keep & save take**. Expect upload progress, then **Take saved ✓**, a title, and a player for the stored vocal. Play it, then choose **View in Library**. The saved take should appear in Library with the same settings and a working vocal player; previously saved takes should also appear. Retake is disabled during saving so a pending save cannot be accidentally discarded.
 7. Check Supabase: one new `tracks` row should have your edited BPM/key/energy, `tier=draft`, `release_ready=false`, `ai_assisted=true`, and a `vocal_path`. A private file should exist at `vocals/<your user ID>/<take ID>/vocal.wav`. File MIME type, size, and duration are stored in `vocal_fx.capture`; source labels are in `vocal_fx.analysisSources`.
 8. Record again with the metronome set to a different tempo. The one-bar count-in should work and analysis should preserve that BPM as **Known · metronome**. Confirm the click is not audible in the recorded vocal.
 
-An unsaved take still exists only in this tab. If saving fails, keep the tab open and use **Retry saving take**. A lost response does not require re-recording or create a second row. If the session expired, sign in in a separate localhost tab, then return and retry. Temporary saved-file playback links last one hour; the private file itself remains stored. Library browsing comes in Stage 5.
+An unsaved take still exists only in this tab. If saving fails, keep the tab open and use **Retry saving take**. A lost response does not require re-recording or create a second row. If the session expired, sign in in a separate localhost tab, then return and retry. Temporary saved-file playback links last one hour; the private file itself remains stored. A basic Library list with saved-vocal playback is now implemented; refresh it for new playback links. Full Library search, filters and track editing come in Stage 5.
 
 ## Phone checks still needed
 
@@ -48,9 +48,10 @@ Run `npm test`, `npm run lint`, `npm run typecheck`, and `npm run build`.
 | 2.3 background processing and loading state | PASS in desktop browser fixture; phone speed UNTESTED | Dedicated worker, progress messages, bounded excerpt, abort/timeout handling; owner phone check needed. |
 | 2.4 stored row and playable vocal | PASS for hosted backend fixture; real signed-in UI UNTESTED | 6,720,044-byte upload uses one POST and one PATCH; row, signed playback bytes, retry reuse, and cleanup pass. |
 | 2.4 progress/retry and unsaved warning | PASS in automated UI/logic checks; owner check pending | Fixture failure preserves take/settings; retry reuses ID; navigation warning cancels leaving. |
+| 2.4 saved take accessible in Library | PASS in automated query/render checks and read-only hosted admin check; signed-in browser UNTESTED | Placeholder replaced by owner-scoped paginated listing and private vocal players. Three existing saved rows have playable files; sampled WAV read returns HTTP 206. Admin backend check does not verify session-client RLS. |
 | Owner-only routes and storage | PASS in code/tests; session-client save UNTESTED | Owner verification before input/storage access, scoped paths, existing RLS unchanged, matching upload required, expired/wrong-owner API sessions return JSON 401. |
 | Server secrets excluded from client | PASS | Compiled client assets scanned against configured server-only values, with no matches. |
-| Required quality checks | PASS | 36 tests, lint, typecheck, production build. |
+| Required quality checks | PASS | 42 tests, lint, typecheck, production build, including the basic Library fix. |
 
 Stage 2 is **not yet tagged complete** because manual acceptance is still pending. Publication to main is authorized; a Git push does not establish deployment success or manual acceptance.
 

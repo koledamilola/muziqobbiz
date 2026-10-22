@@ -116,6 +116,7 @@ export default function TakeReview({ take, onSaved, onSavingChange }: { take: Re
           <p className="mt-1 text-sm text-zinc-200">{saved.title}</p>
           <p className="mt-1 text-xs text-zinc-400">Your vocal and settings are stored privately. You can leave this page.</p>
           {saved.playbackUrl ? <audio aria-label="Play saved vocal" controls preload="none" src={saved.playbackUrl} className="mt-3 w-full" /> : <p className="mt-2 text-xs text-amber-200">Saved successfully. Temporary playback is unavailable right now.</p>}
+          <a href="/library" className="mt-3 inline-flex min-h-11 items-center rounded-lg border border-emerald-300/30 px-4 text-sm text-emerald-200 hover:bg-emerald-300/10">View in Library</a>
         </div>
       ) : (
         <div className="space-y-3">

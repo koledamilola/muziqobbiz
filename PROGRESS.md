@@ -6,10 +6,10 @@ Every agent reads this at the start of a session and updates it at the end. The 
 
 ## Current status
 
-- **Current stage / step:** Stage 2.3/2.4 implemented locally — analysis and private saving pass automated checks; P8 manual acceptance pending
+- **Current stage / step:** Stage 2.3/2.4 published; basic Library listing/playback fix implemented locally. P8 manual acceptance pending.
 - **App URL (production):** https://muziqobbiz.vercel.app
-- **Last working checkpoint (git tag or commit):** `c725597` — `stage 2.4: add vocal analysis and private take saving` (automated checks passed; owner authorized publication to main)
-- **Next step:** Publish the verified commit to main as requested, then check the signed-in analysis/edit/save/playback flow and remaining phone/count-in behavior. Keep Stage 2 unchecked and untagged until manual acceptance passes.
+- **Last working checkpoint (git tag or commit):** `99e38db` — published analysis/private saving and publication log. Library fix passes 42 tests, lint, typecheck, and production build; local checkpoint prepared this session.
+- **Next step:** Check http://localhost:3000/library while signed in: existing takes should appear with playable vocals. Publish the Library fix when requested, then repeat on production/phone and finish the remaining Stage 2 acceptance checks before tagging.
 - **Blockers:** Manual stage-gate checks remain unverified. The owner's latest request authorizes pushing now, superseding the earlier hold. `FAL_KEY` and `FAL_MINIMAX_MODEL_ID` remain optional/deferred for the later ElevenLabs-only generation work.
 
 ---
@@ -60,6 +60,7 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | Residual recording hiss | 2.2 | Deferred by owner | Current reduction is acceptable for now; revisit vocal clarity/noise reduction later without blocking Step 2.3. |
 | Stage 2.3 analysis acceptance | 2.3 | Code and fixtures pass; real phone take untested | Engine and built browser detect generated C-major/120 BPM input; editable overrides and known 90 BPM pass. 45-second analysis excerpt bounds work; real solo-vocal quality and phone speed need owner verification. |
 | Stage 2.4 save acceptance | 2.4 | Hosted backend and fixture UI pass; signed-in browser test pending | 70-second generated WAV uploads using POST + PATCH, saved row and signed playback match, retry reuses row, exact test data cleaned up. Backend fixture uses admin privileges and does not verify the owner's session/RLS. Local owner test was requested. |
+| Saved takes missing from Library | 2.4 | Fixed locally; owner browser acceptance pending | Library was a static placeholder, with no database query. New request-scoped owner listing and signed vocal players replace it. Read-only backend check found three saved rows and three playable vocals; sampled WAV header returned HTTP 206. No recordings changed. Full Stage 5 search/filter/detail work remains deferred. |
 | Unsaved browser history navigation | 2.4 | Device-dependent limitation | Warnings cover page reload/close, app links, sign-out, and Retake. Browser Back interception can vary; save before leaving via history controls. Unsaved audio is still in-memory. |
 | Abandoned upload housekeeping | 2.4 | Deferred | Partial uploads or uploaded files without finalized metadata are retained for retry. No broad deletion job was introduced. |
 | Development-tool dependency audit | 2 | Existing dev-only advisory deferred | Production audit reports zero vulnerabilities. Full audit reports five high entries in Next ESLint's braces/micromatch chain; suggested Next 14 downgrade conflicts with Next 16 and was not applied. |
@@ -86,10 +87,21 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | Audacity noise reduction / MDN workers | https://manual.audacityteam.org/man/noise_reduction.html and https://manual.audacityteam.org/man/alternative_noise_reduction_techniques.html and https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects | 2026-10-22 | A gate addresses pauses; spectral noise reduction addresses steady hiss under vocals. Avoid excessive reduction and musical-noise artifacts. Transfer the mono buffer to a dedicated worker and terminate it on completion, failure, timeout, or cancellation. |
 | Essentia.js | https://mtg.github.io/essentia.js/docs/api/tutorial-1.%20Getting%20started.html and https://essentia.upf.edu/reference/std_RhythmExtractor2013.html and https://essentia.upf.edu/reference/std_KeyExtractor.html | 2026-10-22 | Pinned 0.1.3 ES builds in a lazy worker; rhythm requires 44.1 kHz; KeyExtractor returns key/scale/strength. Input/output vectors disposed and worker terminated. |
 | Supabase signed TUS and file metadata | https://supabase.com/docs/guides/storage/uploads/resumable-uploads and https://github.com/supabase/supabase/blob/master/examples/storage/resumable-upload-signed-uppy/index.html and https://supabase.com/docs/reference/javascript/file-buckets-info | 2026-10-22 | Signed TUS uses `/upload/resumable/sign` with x-signature, 6 MiB chunks and direct storage hostname. Verify info size/contentType before track insert; signed playback only. Changelog reviewed via HTML fallback; existing TLS deprecation noted, no affected configuration introduced. |
+| Supabase Library reads and private playback | https://supabase.com/docs/reference/javascript/select and https://supabase.com/docs/reference/javascript/range and https://supabase.com/docs/reference/javascript/storage-from-createsignedurl | 2026-10-22 | Session client, owner filter, stable newest-first order, 20-row pages with one lookahead row, one-hour signed vocal URLs. Changelog checked at https://supabase.com/changelog after the Markdown endpoint failed; existing TLS deprecation does not change this integration. |
 
 ---
 
 ## Session log (newest first)
+
+### 2026-10-22 — Show saved takes in Library
+
+- **Owner report / cause:** Recording and saving work, but Library is empty. `/library` still rendered `PagePlaceholder` and never queried saved tracks; the save operation itself was not changed.
+- **Fix:** Added a session-client, owner-filtered newest-first list with 20-row pagination, title/date/BPM/key/energy, draft/AI-assisted badges, and private vocal playback. Empty lists and failed reads have distinct messages. An unavailable vocal leaves its row visible. Only owner-folder paths are signed. Library navigation and the new post-save **View in Library** link request fresh data rather than reusing an earlier visited page.
+- **Verification:** 42 tests pass, including rendered saved/empty/error states, owner-scoped pagination, unavailable files and authorization rejection. Lint, typecheck and production build pass. Read-only hosted admin check found three saved rows and three signed playable vocals; a byte-range read returned HTTP 206 with a RIFF header. This backend check does not prove session-client RLS or owner-browser playback. Signed-out local Library redirects to login (307); 21 compiled client JS assets contain zero configured server-secret matches.
+- **Local server:** Restarted the previous task-created production server because its open `.next` log blocked the build. Logs now live in the system temporary directory. Updated app runs at http://localhost:3000. Typecheck was rerun after build regenerated its types.
+- **Scope / status:** Basic saved-vocal browsing was brought forward to make Stage 2 saves accessible. Full Stage 5 filters, search, detail/edit/delete remain deferred. No dependency or schema changes; no recordings changed; no push this session. Stage 2 remains unchecked and untagged.
+- **Commit:** `stage 2.4: show saved recordings in library`.
+- **Owner check / next step:** Open Library while signed in, confirm existing recordings appear, play one, then save another take and use **View in Library**. Repeat on phone after publication. Real browser playback, phone layout and remaining Stage 2 acceptance are still untested.
 
 ### 2026-10-22 — Publication to main authorized
 
