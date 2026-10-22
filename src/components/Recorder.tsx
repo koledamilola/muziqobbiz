@@ -17,17 +17,18 @@ import {
   scheduleMetronomeClick,
 } from "@/lib/audio/metronome";
 import {
+  buildVocalAudioConstraints,
   classifyMicError,
   computeRmsLevel,
   computeWaveformPeaks,
   decodeRecordingBlob,
+  DEFAULT_MIC_BOOST,
   detectRecordingMimeType,
   formatDuration,
   MAX_RECORDING_SECONDS,
   type MicErrorInfo,
   normalizeMimeLabel,
   type RecordedTake,
-  VOCAL_AUDIO_CONSTRAINTS,
 } from "@/lib/audio/recorder";
 
 type RecorderPhase =
@@ -63,6 +64,12 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSec, setPlaybackSec] = useState(0);
 
+  // Vocal Clarity, Noise Reduction & Volume Boost state
+  const [noiseReductionEnabled, setNoiseReductionEnabled] = useState(true);
+  const [autoNormalizeEnabled, setAutoNormalizeEnabled] = useState(true);
+  const [micBoost, setMicBoost] = useState<number>(DEFAULT_MIC_BOOST);
+  const [playbackGain, setPlaybackGain] = useState<number>(1.25);
+
   // Metronome state (Stage 2.2)
   const [metronomeEnabled, setMetronomeEnabled] = useState(false);
   const [bpm, setBpm] = useState<number>(DEFAULT_METRONOME_BPM);
@@ -84,6 +91,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
   const cancelledDuringCountInRef = useRef<boolean>(false);
   const meterFrameRef = useRef<number | null>(null);
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const inputGainNodeRef = useRef<GainNode | null>(null);
 
   // Web Audio metronome scheduler refs
   const nextBeatIndexRef = useRef<number>(0);
@@ -93,6 +101,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
   const previewFrameRef = useRef<number | null>(null);
 
   const playbackSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const playbackGainNodeRef = useRef<GainNode | null>(null);
   const playbackStartContextTimeRef = useRef<number>(0);
   const playbackOffsetSecRef = useRef<number>(0);
   const playbackFrameRef = useRef<number | null>(null);
@@ -100,6 +109,24 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
   useEffect(() => {
     metronomeVolumeRef.current = metronomeVolume;
   }, [metronomeVolume]);
+
+  useEffect(() => {
+    if (inputGainNodeRef.current && audioContextRef.current) {
+      inputGainNodeRef.current.gain.setValueAtTime(
+        micBoost,
+        audioContextRef.current.currentTime,
+      );
+    }
+  }, [micBoost]);
+
+  useEffect(() => {
+    if (playbackGainNodeRef.current && audioContextRef.current) {
+      playbackGainNodeRef.current.gain.setValueAtTime(
+        playbackGain,
+        audioContextRef.current.currentTime,
+      );
+    }
+  }, [playbackGain]);
 
   const applyBpm = useCallback((rawValue: number) => {
     const clamped = clampMetronomeBpm(rawValue);
@@ -147,6 +174,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
       }
       sourceNodeRef.current = null;
     }
+    inputGainNodeRef.current = null;
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach((track) => track.stop());
       mediaStreamRef.current = null;
@@ -170,6 +198,14 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
       } catch {
         // Ignore if already stopped.
       }
+    }
+    if (playbackGainNodeRef.current) {
+      try {
+        playbackGainNodeRef.current.disconnect();
+      } catch {
+        // Ignore disconnect error.
+      }
+      playbackGainNodeRef.current = null;
     }
     setIsPlaying(false);
     if (resetPosition) {
@@ -293,17 +329,71 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
       // Start or resume AudioContext directly inside the user tap handler (AGENTS.md rule 14).
       const audioContext = await ensureAudioContext();
 
-      // Request mono vocal input with echoCancellation, noiseSuppression, and autoGainControl OFF
-      // because speech call filters distort singing pitch, sustain, and dynamics.
+      // Request mono vocal input. Echo cancellation and autoGainControl stay OFF
+      // so sustained singing notes are not hollowed out; optional noiseSuppression
+      // can be enabled alongside our Web Audio vocal clarity chain.
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: VOCAL_AUDIO_CONSTRAINTS,
+        audio: buildVocalAudioConstraints({
+          noiseSuppression: noiseReductionEnabled,
+        }),
       });
       mediaStreamRef.current = stream;
 
+      // Build the live Web Audio vocal clarity + gain chain:
+      // Mic -> 85 Hz High-Pass (removes low rumble/cord noise)
+      //     -> 3.2 kHz Presence EQ (+3 dB vocal clarity)
+      //     -> Gentle Vocal Compressor -> Input Gain Boost -> Analyser + Recorder Destination
+      const sourceNode = audioContext.createMediaStreamSource(stream);
+      sourceNodeRef.current = sourceNode;
+
+      const highPass = audioContext.createBiquadFilter();
+      highPass.type = "highpass";
+      highPass.frequency.setValueAtTime(85, audioContext.currentTime);
+      highPass.Q.setValueAtTime(0.707, audioContext.currentTime);
+
+      const presenceEq = audioContext.createBiquadFilter();
+      presenceEq.type = "peaking";
+      presenceEq.frequency.setValueAtTime(3200, audioContext.currentTime);
+      presenceEq.Q.setValueAtTime(1.0, audioContext.currentTime);
+      presenceEq.gain.setValueAtTime(
+        noiseReductionEnabled ? 3.0 : 0,
+        audioContext.currentTime,
+      );
+
+      const compressor = audioContext.createDynamicsCompressor();
+      compressor.threshold.setValueAtTime(-24, audioContext.currentTime);
+      compressor.knee.setValueAtTime(18, audioContext.currentTime);
+      compressor.ratio.setValueAtTime(3, audioContext.currentTime);
+      compressor.attack.setValueAtTime(0.008, audioContext.currentTime);
+      compressor.release.setValueAtTime(0.18, audioContext.currentTime);
+
+      const inputGainNode = audioContext.createGain();
+      inputGainNode.gain.setValueAtTime(micBoost, audioContext.currentTime);
+      inputGainNodeRef.current = inputGainNode;
+
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 1024;
+      const sampleBuffer = new Float32Array(analyser.fftSize);
+
+      sourceNode.connect(highPass);
+      highPass.connect(presenceEq);
+      presenceEq.connect(compressor);
+      compressor.connect(inputGainNode);
+      inputGainNode.connect(analyser);
+
+      let recordingStream: MediaStream = stream;
+      if (typeof audioContext.createMediaStreamDestination === "function") {
+        const destinationNode = audioContext.createMediaStreamDestination();
+        inputGainNode.connect(destinationNode);
+        if (destinationNode.stream.getAudioTracks().length > 0) {
+          recordingStream = destinationNode.stream;
+        }
+      }
+
       const preferredMimeType = detectRecordingMimeType();
       const recorder = preferredMimeType
-        ? new MediaRecorder(stream, { mimeType: preferredMimeType })
-        : new MediaRecorder(stream);
+        ? new MediaRecorder(recordingStream, { mimeType: preferredMimeType })
+        : new MediaRecorder(recordingStream);
 
       mediaRecorderRef.current = recorder;
       chunksRef.current = [];
@@ -314,14 +404,8 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
       const useClick = metronomeEnabled;
       const lockedBpm = clampMetronomeBpm(bpm);
       metronomeBpmRef.current = lockedBpm;
-
-      // Set up live input level meter via Web Audio AnalyserNode.
-      const sourceNode = audioContext.createMediaStreamSource(stream);
-      sourceNodeRef.current = sourceNode;
-      const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 1024;
-      sourceNode.connect(analyser);
-      const sampleBuffer = new Float32Array(analyser.fftSize);
+      const useNoiseGate = noiseReductionEnabled;
+      const useAutoNormalize = autoNormalizeEnabled;
 
       recorder.ondataavailable = (event: BlobEvent) => {
         if (event.data && event.data.size > 0) {
@@ -356,7 +440,10 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
           }
 
           const ctx = await ensureAudioContext();
-          const audioBuffer = await decodeRecordingBlob(blob, ctx);
+          const audioBuffer = await decodeRecordingBlob(blob, ctx, {
+            noiseGate: useNoiseGate,
+            normalize: useAutoNormalize,
+          });
           const channelData = audioBuffer.getChannelData(0);
           const peaks = computeWaveformPeaks(channelData);
 
@@ -471,9 +558,12 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
       setPhase("idle");
     }
   }, [
+    autoNormalizeEnabled,
     bpm,
     ensureAudioContext,
     metronomeEnabled,
+    micBoost,
+    noiseReductionEnabled,
     stopClickPreview,
     stopMicStream,
     stopPlayback,
@@ -493,7 +583,13 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
 
       const source = ctx.createBufferSource();
       source.buffer = take.audioBuffer;
-      source.connect(ctx.destination);
+
+      const gainNode = ctx.createGain();
+      gainNode.gain.setValueAtTime(playbackGain, ctx.currentTime);
+      playbackGainNodeRef.current = gainNode;
+
+      source.connect(gainNode);
+      gainNode.connect(ctx.destination);
 
       playbackSourceRef.current = source;
       playbackOffsetSecRef.current = safeOffset;
@@ -529,7 +625,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
       source.start(0, safeOffset);
       playbackFrameRef.current = requestAnimationFrame(updatePlayhead);
     },
-    [ensureAudioContext, stopClickPreview, stopPlayback, take],
+    [ensureAudioContext, playbackGain, stopClickPreview, stopPlayback, take],
   );
 
   const togglePlayback = useCallback(async () => {
@@ -577,6 +673,8 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
   const volumePercent = Math.round(
     clampMetronomeVolume(metronomeVolume) * 100,
   );
+  const micBoostPercent = Math.round(micBoost * 100);
+  const playbackGainPercent = Math.round(playbackGain * 100);
   const playbackProgress =
     take && take.durationSec > 0
       ? Math.min(1, Math.max(0, playbackSec / take.durationSec))
@@ -594,8 +692,8 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
           <div>
             <h2 className="text-lg font-medium">1. Vocal Recorder</h2>
             <p className="mt-1 text-sm text-zinc-400">
-              Raw mono vocal capture (speech filters off for natural singing). Max{" "}
-              {formatDuration(MAX_RECORDING_SECONDS)}.
+              Mono vocal capture with studio clarity EQ, rumble filter, and volume
+              boost. Max {formatDuration(MAX_RECORDING_SECONDS)}.
             </p>
           </div>
           {phase === "count-in" ? (
@@ -621,8 +719,80 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
           ) : null}
         </div>
 
-        {/* Optional Metronome & 1-Bar Count-In Panel (Stage 2.2) */}
+        {/* Vocal Clarity, Noise Cancelling & Mic Gain Boost Controls */}
         <div className="mt-5 rounded-lg border border-zinc-800/90 bg-zinc-900/35 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
+              Vocal Clarity &amp; Volume Boost
+            </h3>
+            <span className="text-xs text-emerald-300">
+              85 Hz rumble cut · 3.2 kHz clarity EQ · Soft noise gate
+            </span>
+          </div>
+
+          <div className="mt-3 grid gap-4 sm:grid-cols-3">
+            <label className="inline-flex cursor-pointer items-start gap-2.5 select-none">
+              <input
+                type="checkbox"
+                checked={noiseReductionEnabled}
+                disabled={controlsLocked}
+                onChange={(event) => setNoiseReductionEnabled(event.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-zinc-600 bg-zinc-900 text-emerald-500 focus:ring-2 focus:ring-emerald-400 disabled:opacity-50"
+              />
+              <span className="text-xs text-zinc-200">
+                <strong className="block font-medium text-zinc-100">
+                  Noise reduction &amp; clarity
+                </strong>
+                Cuts room hiss, cord rumble &amp; adds vocal presence
+              </span>
+            </label>
+
+            <label className="inline-flex cursor-pointer items-start gap-2.5 select-none">
+              <input
+                type="checkbox"
+                checked={autoNormalizeEnabled}
+                disabled={controlsLocked}
+                onChange={(event) => setAutoNormalizeEnabled(event.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-zinc-600 bg-zinc-900 text-emerald-500 focus:ring-2 focus:ring-emerald-400 disabled:opacity-50"
+              />
+              <span className="text-xs text-zinc-200">
+                <strong className="block font-medium text-zinc-100">
+                  Auto-maximize vocal loudness
+                </strong>
+                Normalizes quiet headset takes to full studio volume
+              </span>
+            </label>
+
+            <div>
+              <div className="flex items-center justify-between text-xs">
+                <label
+                  htmlFor="mic-boost-slider"
+                  className="font-medium text-zinc-200"
+                >
+                  Mic input boost
+                </label>
+                <span className="font-mono tabular-nums text-emerald-300">
+                  {micBoostPercent}%
+                </span>
+              </div>
+              <input
+                id="mic-boost-slider"
+                type="range"
+                min={100}
+                max={300}
+                step={10}
+                value={micBoostPercent}
+                onChange={(event) =>
+                  setMicBoost(Number(event.target.value) / 100)
+                }
+                className="mt-1.5 w-full accent-emerald-400"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Optional Metronome & 1-Bar Count-In Panel (Stage 2.2) */}
+        <div className="mt-4 rounded-lg border border-zinc-800/90 bg-zinc-900/35 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <label className="inline-flex cursor-pointer items-center gap-3 select-none">
               <input
@@ -919,11 +1089,11 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
                   ? "Recording starts automatically after beat 4…"
                   : phase === "recording"
                     ? meterPercent > 88
-                      ? "Strong signal — step back slightly if it clips."
+                      ? "Strong signal — lower Mic input boost slightly if it clips."
                       : meterPercent > 8
                         ? "Good vocal level."
-                        : "Sing or hum into your mic…"
-                    : "Use wired headphones when possible for the cleanest vocal take."}
+                        : "Sing into your wired headphone mic…"
+                    : "Hold your wired headphone mic close to your mouth for the clearest tone."}
               </p>
             </div>
 
@@ -949,7 +1119,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
                   {phase === "requesting"
                     ? "Allow microphone…"
                     : phase === "decoding"
-                      ? "Decoding take…"
+                      ? "Enhancing & decoding take…"
                       : metronomeEnabled
                         ? `Count-in & Record (${bpm} BPM)`
                         : "Record vocal"}
@@ -959,7 +1129,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
           </div>
         ) : null}
 
-        {/* Review Take: Waveform Preview, Playback, Retake & Keep */}
+        {/* Review Take: Waveform Preview, Playback Volume, Retake & Keep */}
         {phase === "review" && take ? (
           <div className="mt-6 space-y-5 rounded-lg border border-zinc-800 bg-zinc-900/40 p-5">
             {take.reachedMaxLength ? (
@@ -1032,6 +1202,33 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
                     </button>
                   );
                 })}
+              </div>
+            </div>
+
+            {/* Playback Volume Control */}
+            <div className="flex flex-wrap items-center justify-between gap-4 rounded-md border border-zinc-800/80 bg-zinc-950/60 px-3.5 py-2.5 text-xs">
+              <label
+                htmlFor="playback-volume-slider"
+                className="font-medium text-zinc-300"
+              >
+                Playback volume boost
+              </label>
+              <div className="flex flex-1 items-center gap-3 sm:max-w-xs">
+                <input
+                  id="playback-volume-slider"
+                  type="range"
+                  min={50}
+                  max={200}
+                  step={5}
+                  value={playbackGainPercent}
+                  onChange={(event) =>
+                    setPlaybackGain(Number(event.target.value) / 100)
+                  }
+                  className="w-full accent-emerald-400"
+                />
+                <span className="w-12 text-right font-mono tabular-nums text-emerald-300">
+                  {playbackGainPercent}%
+                </span>
               </div>
             </div>
 

@@ -18,7 +18,7 @@ function loadAudioModule(relativePath) {
   const exports = {};
   vm.runInNewContext(
     outputText,
-    { exports, Math, Number, String, Array, Object },
+    { exports, Math, Number, String, Array, Object, Float32Array },
     { filename: relativePath },
   );
   return exports;
@@ -27,12 +27,58 @@ function loadAudioModule(relativePath) {
 const recorder = loadAudioModule("../src/lib/audio/recorder.ts");
 const metronome = loadAudioModule("../src/lib/audio/metronome.ts");
 
-test("VOCAL_AUDIO_CONSTRAINTS disables speech call filters and requests mono", () => {
+test("VOCAL_AUDIO_CONSTRAINTS disables speech call filters and buildVocalAudioConstraints toggles noiseSuppression", () => {
   assert.equal(recorder.VOCAL_AUDIO_CONSTRAINTS.channelCount, 1);
   assert.equal(recorder.VOCAL_AUDIO_CONSTRAINTS.echoCancellation, false);
   assert.equal(recorder.VOCAL_AUDIO_CONSTRAINTS.noiseSuppression, false);
   assert.equal(recorder.VOCAL_AUDIO_CONSTRAINTS.autoGainControl, false);
   assert.equal(recorder.MAX_RECORDING_SECONDS, 180);
+
+  const withNoiseReduction = recorder.buildVocalAudioConstraints({
+    noiseSuppression: true,
+  });
+  assert.equal(withNoiseReduction.echoCancellation, false);
+  assert.equal(withNoiseReduction.autoGainControl, false);
+  assert.equal(withNoiseReduction.noiseSuppression, true);
+});
+
+test("cleanAndNormalizeSamples boosts quiet wired-headset vocals and attenuates low-level background hiss", () => {
+  const sampleRate = 48000;
+  const totalSamples = 4800; // 100ms
+  const input = new Float32Array(totalSamples);
+
+  // First half: quiet room hiss (~0.002). Second half: quiet sung note at 440 Hz (~0.15 amplitude).
+  for (let i = 0; i < totalSamples; i++) {
+    if (i < totalSamples / 2) {
+      input[i] = (i % 2 === 0 ? 1 : -1) * 0.002;
+    } else {
+      input[i] = 0.15 * Math.sin((2 * Math.PI * 440 * i) / sampleRate);
+    }
+  }
+
+  const cleaned = recorder.cleanAndNormalizeSamples(input, sampleRate, {
+    noiseGate: true,
+    normalize: true,
+  });
+
+  let maxHissPeak = 0;
+  for (let i = 100; i < totalSamples / 2 - 100; i++) {
+    const abs = Math.abs(cleaned[i]);
+    if (abs > maxHissPeak) maxHissPeak = abs;
+  }
+
+  let maxSungPeak = 0;
+  for (let i = Math.floor(totalSamples * 0.5); i < totalSamples; i++) {
+    const abs = Math.abs(cleaned[i]);
+    if (abs > maxSungPeak) maxSungPeak = abs;
+  }
+
+  // Quiet 0.15 input peak is boosted up to TARGET_VOCAL_PEAK (~0.89), while room hiss stays gated down.
+  assert.ok(
+    maxSungPeak > 0.85 && maxSungPeak <= 0.98,
+    `Expected maxSungPeak in (0.85, 0.98], got ${maxSungPeak} (hiss peak: ${maxHissPeak})`,
+  );
+  assert.ok(maxHissPeak < 0.01, `Expected hiss peak < 0.01, got ${maxHissPeak}`);
 });
 
 test("detectRecordingMimeType picks audio/webm on Chrome/Android and audio/mp4 on iOS Safari", () => {
