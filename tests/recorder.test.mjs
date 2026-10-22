@@ -18,7 +18,7 @@ function loadAudioModule(relativePath) {
   const exports = {};
   vm.runInNewContext(
     outputText,
-    { exports, Math, Number, String, Array, Object, Float32Array },
+    { exports, Math, Number, String, Array, Object, Float32Array, ArrayBuffer, DataView, Blob },
     { filename: relativePath },
   );
   return exports;
@@ -27,19 +27,83 @@ function loadAudioModule(relativePath) {
 const recorder = loadAudioModule("../src/lib/audio/recorder.ts");
 const metronome = loadAudioModule("../src/lib/audio/metronome.ts");
 
-test("VOCAL_AUDIO_CONSTRAINTS disables speech call filters and buildVocalAudioConstraints toggles noiseSuppression", () => {
-  assert.equal(recorder.VOCAL_AUDIO_CONSTRAINTS.channelCount, 1);
-  assert.equal(recorder.VOCAL_AUDIO_CONSTRAINTS.echoCancellation, false);
-  assert.equal(recorder.VOCAL_AUDIO_CONSTRAINTS.noiseSuppression, false);
-  assert.equal(recorder.VOCAL_AUDIO_CONSTRAINTS.autoGainControl, false);
+test("buildVocalAudioConstraints requests mono capture and toggles noise suppression", () => {
   assert.equal(recorder.MAX_RECORDING_SECONDS, 180);
 
   const withNoiseReduction = recorder.buildVocalAudioConstraints({
     noiseSuppression: true,
   });
   assert.equal(withNoiseReduction.echoCancellation, false);
+  assert.equal(withNoiseReduction.channelCount, 1);
   assert.equal(withNoiseReduction.autoGainControl, false);
   assert.equal(withNoiseReduction.noiseSuppression, true);
+  assert.equal(recorder.buildVocalAudioConstraints().noiseSuppression, false);
+});
+
+test("a short loud bump does not leave a quiet vocal take inaudible or clip it", () => {
+  const rate = 48000;
+  const input = new Float32Array(rate);
+  for (let i = 0; i < rate; i++) {
+    input[i] = 0.04 * Math.sin(2 * Math.PI * 440 * i / rate);
+  }
+  input[rate / 2] = 0.9;
+  const output = recorder.cleanAndNormalizeSamples(input, rate, {
+    noiseGate: false,
+    highPass: false,
+  });
+  assert.ok(Math.abs(output[rate / 4 + 27]) > 0.2);
+  assert.ok(Math.max(...output) <= 0.981);
+});
+
+test("enhanced audio is stored in a valid mono 16-bit WAV file", async () => {
+  const samples = new Float32Array([0, 0.5, -1, 1]);
+  const blob = recorder.encodeWavBlob({
+    sampleRate: 48000,
+    getChannelData: () => samples,
+  });
+  assert.equal(blob.type, "audio/wav");
+  assert.equal(blob.size, 52);
+  const bytes = new DataView(await blob.arrayBuffer());
+  assert.equal(bytes.getUint32(4, true), 44);
+  assert.equal(bytes.getUint16(22, true), 1);
+  assert.equal(bytes.getUint32(24, true), 48000);
+  assert.equal(bytes.getInt16(48, true), -32768);
+});
+
+test("capture graph routes boosted audio through compression into the recorded stream", () => {
+  const edges = [];
+  const param = { setValueAtTime() {} };
+  const node = (name) => ({
+    name,
+    connect(target) { edges.push(`${name}->${target.name}`); },
+    disconnect() {},
+  });
+  const mic = { getAudioTracks: () => [{}] };
+  const processed = { getAudioTracks: () => [{}] };
+  let filterCount = 0;
+  const context = {
+    currentTime: 1,
+    createMediaStreamSource: (stream) => {
+      assert.equal(stream, mic);
+      return node("mic");
+    },
+    createBiquadFilter: () => Object.assign(
+      node(filterCount++ ? "presence" : "highpass"),
+      { frequency: param, Q: param, gain: param },
+    ),
+    createGain: () => Object.assign(node("boost"), { gain: param }),
+    createDynamicsCompressor: () => Object.assign(node("compressor"), {
+      threshold: param, knee: param, ratio: param, attack: param, release: param,
+    }),
+    createAnalyser: () => node("meter"),
+    createMediaStreamDestination: () => Object.assign(node("recording"), { stream: processed }),
+  };
+  const graph = recorder.createVocalCaptureGraph(context, mic, 1.8);
+  assert.equal(graph.recordingStream, processed);
+  assert.deepEqual(edges, [
+    "mic->highpass", "highpass->boost", "boost->presence",
+    "presence->compressor", "compressor->meter", "compressor->recording",
+  ]);
 });
 
 test("cleanAndNormalizeSamples boosts quiet wired-headset vocals and attenuates low-level background hiss", () => {

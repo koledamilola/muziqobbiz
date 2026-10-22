@@ -9,7 +9,7 @@ export default function DatabaseCheck() {
   const [state, action, pending] = useActionState(checkDatabase, initialState);
 
   return (
-    <div className="mt-6 max-w-xl rounded-lg border border-zinc-800 p-5">
+    <div className="studio-panel mt-6 max-w-xl rounded-xl p-5">
       <h2 className="text-lg font-medium">Database connection</h2>
       <p className="mt-2 text-sm text-zinc-400">
         Save and read back a temporary test track and job using your account,

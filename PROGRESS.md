@@ -6,10 +6,10 @@ Every agent reads this at the start of a session and updates it at the end. The 
 
 ## Current status
 
-- **Current stage / step:** Stage 2.2 — Metronome and count-in deployed to `main`; awaiting owner verification on phone/desktop
+- **Current stage / step:** Stage 2.2 — Recorder audio and interface polish; owner phone/desktop verification pending
 - **App URL (production):** https://muziqobbiz.vercel.app
-- **Last working checkpoint (git tag or commit):** `stage 2.2: metronome` (pushed to `origin/main`)
-- **Next step:** Verify recording with wired headphones to the click and count-in, then start Stage 2.3 — On-device analysis with `essentia.js`
+- **Last working checkpoint (git tag or commit):** `stage 2.2: improve vocal capture and studio theme` (automated checks pass; owner verification pending)
+- **Next step:** Verify a quiet wired-headset vocal and metronome count-in on phone and desktop, then start Stage 2.3 — On-device analysis with `essentia.js`
 - **Blockers:** None (`FAL_KEY` and `FAL_MINIMAX_MODEL_ID` are deferred and marked optional while ElevenLabs is used alone for now)
 
 ---
@@ -52,7 +52,7 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | Stage 1.4 hosted schema, storage and signed-in check | 1.4 | SQL and owner browser verified | Both migrations applied; owner CRUD and row isolation pass; three private buckets and storage RLS confirmed. Owner supplied the Status success message following local test instructions. Production/phone repeat and actual Storage API round-trip are untested. |
 | Stage 1.5 Status acceptance and provider configuration | 1.5 | Owner-verified live | Owner confirmed all four Status sections (`Owner verified`, `Reachable`, `0 / 25` today's generations, and `All required settings are present`). `FAL_KEY`, `FAL_MINIMAX_MODEL_ID`, and `MINIMAX_API_KEY` remain optional until added. |
 | Stage 2.1 Vocal recorder browser/phone verification | 2.1 | Owner-verified | Owner confirmed recording, Play take, Retake, and Keep take all work as expected. |
-| Stage 2.2 Metronome and count-in verification | 2.2 | Automated checks pass; owner click test pending | 19 unit tests, lint, typecheck, and build pass. Needs owner verification of steady click, 1-bar count-in, wired-headphones bleed isolation, and remembered BPM. |
+| Stage 2.2 recorder and metronome verification | 2.2 | Automated checks pass; owner audio/UI test pending | 23 tests, lint, typecheck, and build pass. Needs owner verification on phone and desktop of wired-headset mic choice, quieter room noise, stronger kept take, steady click, count-in, and readable new theme. Browser noise suppression may be unavailable or may soften sung notes. |
 
 ---
 
@@ -72,10 +72,21 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | Next.js / Vercel Status rendering | https://nextjs.org/docs/app/getting-started/cache-components and https://vercel.com/docs/environment-variables/system-environment-variables | 2026-10-22 | Request-time cookie-backed checks behind Suspense; VERCEL_GIT_COMMIT_SHA available for deployed version labels; no cross-request cache |
 | MDN Web Audio & MediaRecorder | https://developer.mozilla.org/en-US/docs/Web/API/MediaRecorder and https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/decodeAudioData | 2026-10-22 | Detect `audio/webm` (Opus) vs `audio/mp4` (AAC) via `MediaRecorder.isTypeSupported`; disable `echoCancellation`, `noiseSuppression`, and `autoGainControl` for singing; resume `AudioContext` on user tap and decode every take to an `AudioBuffer` |
 | MDN Web Audio Clock Scheduling | https://developer.mozilla.org/en-US/docs/Web/API/AudioContext/currentTime and https://developer.mozilla.org/en-US/docs/Web/API/OscillatorNode | 2026-10-22 | Schedule metronome clicks ahead on `audioContext.currentTime` (lookahead window) with `OscillatorNode` + `GainNode` ramps so timing never jitters with `setTimeout` |
+| MDN processed audio capture | https://developer.mozilla.org/en-US/docs/Web/API/AudioContext/createMediaStreamDestination and https://developer.mozilla.org/en-US/docs/Web/API/DynamicsCompressorNode and https://developer.mozilla.org/en-US/docs/Web/API/MediaStreamTrack/getSettings | 2026-10-22 | Record from the processed Web Audio graph; put mic gain before compression; inspect active microphone and browser noise-suppression setting. |
 
 ---
 
 ## Session log (newest first)
+
+### 2026-10-22 — Stage 2.2 recorder cleanup and studio palette
+- **Date:** 2026-10-22
+- **Agent / tool used:** Codex
+- **Stage / step worked on:** Stage 2.2 polish, following owner wired-headphone feedback
+- **What was done:** Extracted the vocal capture graph into `src/lib/audio/recorder.ts`, moved mic gain before compression, kept the presence EQ independent of noise suppression, improved soft-gate and normalization behavior for quiet singing with a brief loud bump, and encoded the enhanced mono take as WAV so `Keep take` uses the same processed audio as playback. Removed a duplicate unused microphone-constraints constant, hardened capture cleanup after recorder errors, and displayed the active microphone label and suppression availability. Added a shared midnight-violet/coral/mint visual system across the main app, navigation, login, status, and placeholders.
+- **Tested? (by agent / by owner / untested):** Agent: 23 tests, lint, typecheck, and production build pass. Owner: phone/desktop audio quality and new theme not yet tested.
+- **Problems & how they were resolved:** Next.js build's worker could not spawn in the sandbox (`EPERM`); reran the same build outside the sandbox successfully. Noise filtering reduces steady noise and pauses but cannot guarantee silence under a sung voice; the browser may alter vocal tone when suppression is enabled. Enhanced WAV takes use more memory than the browser's compressed temporary recording (about 17 MB for a 3-minute mono 48 kHz take).
+- **Commit / tag:** `stage 2.2: improve vocal capture and studio theme`
+- **Exact next step:** Owner checks a quiet wired-headset recording with noise reduction on/off, listens to the kept take, and checks the redesigned screens on phone and desktop; then begin Stage 2.3.
 
 ### 2026-10-22 — Stage 2.2 metronome and count-in implementation
 - **Date:** 2026-10-22

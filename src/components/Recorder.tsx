@@ -21,9 +21,11 @@ import {
   classifyMicError,
   computeRmsLevel,
   computeWaveformPeaks,
+  createVocalCaptureGraph,
   decodeRecordingBlob,
   DEFAULT_MIC_BOOST,
   detectRecordingMimeType,
+  encodeWavBlob,
   formatDuration,
   MAX_RECORDING_SECONDS,
   type MicErrorInfo,
@@ -57,6 +59,8 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
   const [phase, setPhase] = useState<RecorderPhase>("idle");
   const [elapsedSec, setElapsedSec] = useState(0);
   const [inputLevel, setInputLevel] = useState(0);
+  const [activeMicLabel, setActiveMicLabel] = useState<string | null>(null);
+  const [browserNoiseSuppression, setBrowserNoiseSuppression] = useState<boolean | null>(null);
   const [micError, setMicError] = useState<MicErrorInfo | null>(null);
   const [decodeError, setDecodeError] = useState<string | null>(null);
   const [take, setTake] = useState<RecordedTake | null>(null);
@@ -68,7 +72,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
   const [noiseReductionEnabled, setNoiseReductionEnabled] = useState(true);
   const [autoNormalizeEnabled, setAutoNormalizeEnabled] = useState(true);
   const [micBoost, setMicBoost] = useState<number>(DEFAULT_MIC_BOOST);
-  const [playbackGain, setPlaybackGain] = useState<number>(1.25);
+  const [playbackGain, setPlaybackGain] = useState<number>(1);
 
   // Metronome state (Stage 2.2)
   const [metronomeEnabled, setMetronomeEnabled] = useState(false);
@@ -90,7 +94,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
   const reachedMaxRef = useRef<boolean>(false);
   const cancelledDuringCountInRef = useRef<boolean>(false);
   const meterFrameRef = useRef<number | null>(null);
-  const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const captureNodesRef = useRef<AudioNode[]>([]);
   const inputGainNodeRef = useRef<GainNode | null>(null);
 
   // Web Audio metronome scheduler refs
@@ -166,20 +170,22 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
       cancelAnimationFrame(meterFrameRef.current);
       meterFrameRef.current = null;
     }
-    if (sourceNodeRef.current) {
+    for (const node of captureNodesRef.current) {
       try {
-        sourceNodeRef.current.disconnect();
+        node.disconnect();
       } catch {
-        // Ignore disconnect errors if already disconnected.
+        // A browser may have already closed the graph after a device error.
       }
-      sourceNodeRef.current = null;
     }
+    captureNodesRef.current = [];
     inputGainNodeRef.current = null;
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach((track) => track.stop());
       mediaStreamRef.current = null;
     }
     setInputLevel(0);
+    setActiveMicLabel(null);
+    setBrowserNoiseSuppression(null);
     setBeatDisplay(null);
   }, []);
 
@@ -338,57 +344,16 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
         }),
       });
       mediaStreamRef.current = stream;
-
-      // Build the live Web Audio vocal clarity + gain chain:
-      // Mic -> 85 Hz High-Pass (removes low rumble/cord noise)
-      //     -> 3.2 kHz Presence EQ (+3 dB vocal clarity)
-      //     -> Gentle Vocal Compressor -> Input Gain Boost -> Analyser + Recorder Destination
-      const sourceNode = audioContext.createMediaStreamSource(stream);
-      sourceNodeRef.current = sourceNode;
-
-      const highPass = audioContext.createBiquadFilter();
-      highPass.type = "highpass";
-      highPass.frequency.setValueAtTime(85, audioContext.currentTime);
-      highPass.Q.setValueAtTime(0.707, audioContext.currentTime);
-
-      const presenceEq = audioContext.createBiquadFilter();
-      presenceEq.type = "peaking";
-      presenceEq.frequency.setValueAtTime(3200, audioContext.currentTime);
-      presenceEq.Q.setValueAtTime(1.0, audioContext.currentTime);
-      presenceEq.gain.setValueAtTime(
-        noiseReductionEnabled ? 3.0 : 0,
-        audioContext.currentTime,
+      setActiveMicLabel(stream.getAudioTracks()[0]?.label || "Default microphone");
+      setBrowserNoiseSuppression(
+        stream.getAudioTracks()[0]?.getSettings().noiseSuppression ?? null,
       );
 
-      const compressor = audioContext.createDynamicsCompressor();
-      compressor.threshold.setValueAtTime(-24, audioContext.currentTime);
-      compressor.knee.setValueAtTime(18, audioContext.currentTime);
-      compressor.ratio.setValueAtTime(3, audioContext.currentTime);
-      compressor.attack.setValueAtTime(0.008, audioContext.currentTime);
-      compressor.release.setValueAtTime(0.18, audioContext.currentTime);
-
-      const inputGainNode = audioContext.createGain();
-      inputGainNode.gain.setValueAtTime(micBoost, audioContext.currentTime);
-      inputGainNodeRef.current = inputGainNode;
-
-      const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 1024;
+      const capture = createVocalCaptureGraph(audioContext, stream, micBoost);
+      captureNodesRef.current = capture.nodes;
+      inputGainNodeRef.current = capture.inputGain;
+      const { analyser, recordingStream } = capture;
       const sampleBuffer = new Float32Array(analyser.fftSize);
-
-      sourceNode.connect(highPass);
-      highPass.connect(presenceEq);
-      presenceEq.connect(compressor);
-      compressor.connect(inputGainNode);
-      inputGainNode.connect(analyser);
-
-      let recordingStream: MediaStream = stream;
-      if (typeof audioContext.createMediaStreamDestination === "function") {
-        const destinationNode = audioContext.createMediaStreamDestination();
-        inputGainNode.connect(destinationNode);
-        if (destinationNode.stream.getAudioTracks().length > 0) {
-          recordingStream = destinationNode.stream;
-        }
-      }
 
       const preferredMimeType = detectRecordingMimeType();
       const recorder = preferredMimeType
@@ -414,6 +379,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
       };
 
       recorder.onerror = () => {
+        cancelledDuringCountInRef.current = true;
         stopMicStream();
         setDecodeError("Recording interrupted. Please tap Record to try again.");
         setPhase("idle");
@@ -430,8 +396,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
         setPhase("decoding");
 
         try {
-          const actualMimeType =
-            recorder.mimeType || preferredMimeType || "audio/webm";
+          const actualMimeType = recorder.mimeType || preferredMimeType || "";
           const blob = new Blob(chunksRef.current, { type: actualMimeType });
           chunksRef.current = [];
 
@@ -443,13 +408,15 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
           const audioBuffer = await decodeRecordingBlob(blob, ctx, {
             noiseGate: useNoiseGate,
             normalize: useAutoNormalize,
+            highPass: false,
           });
+          const enhancedBlob = encodeWavBlob(audioBuffer);
           const channelData = audioBuffer.getChannelData(0);
           const peaks = computeWaveformPeaks(channelData);
 
           const recordedTake: RecordedTake = {
-            blob,
-            mimeType: actualMimeType,
+            blob: enhancedBlob,
+            mimeType: enhancedBlob.type,
             durationSec: audioBuffer.duration,
             audioBuffer,
             peaks,
@@ -687,10 +654,10 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
 
   return (
     <div className="mt-6 space-y-6">
-      <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-5 sm:p-6">
+      <div className="studio-card rounded-2xl p-5 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h2 className="text-lg font-medium">1. Vocal Recorder</h2>
+            <h2 className="text-lg font-semibold text-white">01 / Vocal recorder</h2>
             <p className="mt-1 text-sm text-zinc-400">
               Mono vocal capture with studio clarity EQ, rumble filter, and volume
               boost. Max {formatDuration(MAX_RECORDING_SECONDS)}.
@@ -720,7 +687,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
         </div>
 
         {/* Vocal Clarity, Noise Cancelling & Mic Gain Boost Controls */}
-        <div className="mt-5 rounded-lg border border-zinc-800/90 bg-zinc-900/35 p-4">
+        <div className="studio-panel mt-5 rounded-xl p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
               Vocal Clarity &amp; Volume Boost
@@ -743,7 +710,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
                 <strong className="block font-medium text-zinc-100">
                   Noise reduction &amp; clarity
                 </strong>
-                Cuts room hiss, cord rumble &amp; adds vocal presence
+                Reduces steady noise and pauses; works best in a quiet room
               </span>
             </label>
 
@@ -759,7 +726,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
                 <strong className="block font-medium text-zinc-100">
                   Auto-maximize vocal loudness
                 </strong>
-                Normalizes quiet headset takes to full studio volume
+                Raises quiet takes while limiting sharp peaks
               </span>
             </label>
 
@@ -792,7 +759,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
         </div>
 
         {/* Optional Metronome & 1-Bar Count-In Panel (Stage 2.2) */}
-        <div className="mt-4 rounded-lg border border-zinc-800/90 bg-zinc-900/35 p-4">
+        <div className="studio-panel mt-4 rounded-xl p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <label className="inline-flex cursor-pointer items-center gap-3 select-none">
               <input
@@ -1028,7 +995,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
 
         {/* Idle / Requesting / Count-in / Recording / Decoding Controls */}
         {phase !== "review" ? (
-          <div className="mt-6 flex flex-col items-center rounded-lg border border-zinc-800/80 bg-zinc-900/40 p-6 text-center">
+          <div className="studio-panel mt-6 flex flex-col items-center rounded-xl p-6 text-center">
             {phase === "count-in" ? (
               <div role="status" aria-live="polite" className="mb-2">
                 <p className="text-xs font-semibold uppercase tracking-wider text-amber-300">
@@ -1057,6 +1024,14 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
                     : "—"}
                 </span>
               </div>
+              {activeMicLabel ? (
+                <p className="mt-1 text-left text-xs text-zinc-400">
+                  Recording from: {activeMicLabel}
+                  {noiseReductionEnabled && browserNoiseSuppression === false
+                    ? " · Browser noise suppression unavailable; soft gate remains on"
+                    : ""}
+                </p>
+              ) : null}
               <div
                 role="meter"
                 aria-labelledby="mic-level-label"
@@ -1113,7 +1088,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
                   type="button"
                   onClick={startRecording}
                   disabled={phase === "requesting" || phase === "decoding"}
-                  className="inline-flex min-h-14 min-w-52 items-center justify-center gap-3 rounded-full bg-red-600 px-8 py-4 text-base font-semibold text-white shadow-lg hover:bg-red-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex min-h-14 min-w-52 items-center justify-center gap-3 rounded-full bg-gradient-to-r from-rose-400 to-fuchsia-400 px-8 py-4 text-base font-semibold text-[#180d2b] shadow-[0_10px_30px_rgba(244,63,94,.25)] transition-transform hover:scale-[1.02] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <span className="h-3.5 w-3.5 rounded-full bg-white" />
                   {phase === "requesting"
@@ -1131,7 +1106,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
 
         {/* Review Take: Waveform Preview, Playback Volume, Retake & Keep */}
         {phase === "review" && take ? (
-          <div className="mt-6 space-y-5 rounded-lg border border-zinc-800 bg-zinc-900/40 p-5">
+          <div className="studio-panel mt-6 space-y-5 rounded-xl p-5">
             {take.reachedMaxLength ? (
               <p className="rounded-md border border-amber-800/70 bg-amber-950/40 px-3 py-2 text-xs text-amber-200">
                 Reached the 3:00 maximum recording length and stopped automatically.
@@ -1194,7 +1169,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
                       <span
                         className={`w-full rounded-full transition-colors ${
                           isPlayed
-                            ? "bg-emerald-400"
+                            ? "bg-cyan-300"
                             : "bg-zinc-600 group-hover:bg-zinc-400"
                         }`}
                         style={{ height: `${heightPercent}%` }}
@@ -1237,7 +1212,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
               <button
                 type="button"
                 onClick={() => void togglePlayback()}
-                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-zinc-100 px-5 py-2.5 text-sm font-semibold text-zinc-950 hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+                className="studio-primary inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold"
               >
                 {isPlaying ? "Pause playback" : "Play take"}
               </button>

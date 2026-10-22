@@ -23,14 +23,14 @@ export default function LoginForm() {
           autoComplete="email"
           required
           disabled={pending}
-          className="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-3 text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-violet-500"
+          className="mt-2 w-full rounded-xl border border-violet-300/25 bg-[#0e1028] px-4 py-3 text-white outline-none placeholder:text-slate-500 focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20"
           placeholder="you@example.com"
         />
       </div>
       <button
         type="submit"
         disabled={pending}
-        className="w-full rounded-lg bg-violet-500 px-4 py-3 font-medium text-white hover:bg-violet-400 disabled:cursor-not-allowed disabled:opacity-60"
+        className="studio-primary w-full rounded-xl px-4 py-3 font-semibold disabled:cursor-not-allowed disabled:opacity-60"
       >
         {pending ? "Sending…" : "Email me a sign-in link"}
       </button>

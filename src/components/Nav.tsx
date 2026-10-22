@@ -13,7 +13,7 @@ export default function Nav() {
   return (
     <nav
       aria-label="Main"
-      className="fixed inset-x-0 bottom-0 z-10 border-t border-zinc-800 bg-zinc-950 md:static md:w-52 md:shrink-0 md:border-t-0 md:border-r"
+      className="fixed inset-x-0 bottom-0 z-10 border-t border-violet-300/15 bg-[#11102a]/95 shadow-[0_-10px_35px_rgba(0,0,0,.2)] backdrop-blur-xl md:static md:w-52 md:shrink-0 md:border-t-0 md:border-r md:shadow-none"
     >
       <ul className="flex md:flex-col md:gap-1 md:p-3">
         {NAV_ITEMS.map((item) => {
@@ -23,10 +23,10 @@ export default function Nav() {
               <Link
                 href={item.href}
                 aria-current={active ? "page" : undefined}
-                className={`flex min-h-14 flex-col items-center justify-center gap-0.5 text-xs md:min-h-11 md:flex-row md:justify-start md:gap-3 md:rounded-lg md:px-3 md:text-sm ${
+                className={`flex min-h-14 flex-col items-center justify-center gap-0.5 border-t-2 text-xs transition-colors md:min-h-11 md:flex-row md:justify-start md:gap-3 md:rounded-lg md:border-t-0 md:border-l-2 md:px-3 md:text-sm ${
                   active
-                    ? "text-violet-400 md:bg-zinc-900"
-                    : "text-zinc-400 hover:text-zinc-100 md:hover:bg-zinc-900"
+                    ? "border-violet-300 bg-violet-400/10 text-violet-200 md:bg-violet-400/15"
+                    : "border-transparent text-zinc-400 hover:bg-violet-300/10 hover:text-white"
                 }`}
               >
                 <span aria-hidden className="text-lg md:text-base">

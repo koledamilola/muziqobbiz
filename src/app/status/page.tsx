@@ -24,12 +24,12 @@ async function SystemHealth() {
   return (
     <div className="mt-6 space-y-6">
       <div className="grid gap-4 sm:grid-cols-2">
-        <section className="rounded-lg border border-zinc-800 p-5" aria-labelledby="account-heading">
+        <section className="studio-card rounded-xl p-5" aria-labelledby="account-heading">
           <h2 id="account-heading" className="font-medium">Signed-in account</h2>
           <p className="mt-2 break-all text-sm text-zinc-300">{status.email}</p>
           <p className="mt-2 text-sm text-emerald-300">Owner verified</p>
         </section>
-        <section className="rounded-lg border border-zinc-800 p-5" aria-labelledby="database-heading">
+        <section className="studio-card rounded-xl p-5" aria-labelledby="database-heading">
           <h2 id="database-heading" className="font-medium">Supabase database</h2>
           <p className={`mt-2 text-sm ${reachable ? "text-emerald-300" : "text-amber-300"}`}>
             {reachable ? "Reachable" : "Check unavailable"}
@@ -40,7 +40,7 @@ async function SystemHealth() {
         </section>
       </div>
 
-      <section className="rounded-lg border border-zinc-800 p-5" aria-labelledby="usage-heading">
+      <section className="studio-card rounded-xl p-5" aria-labelledby="usage-heading">
         <h2 id="usage-heading" className="font-medium">Today’s generations</h2>
         <p className="mt-2 text-2xl font-semibold tabular-nums">
           {status.generationCount ?? "Unavailable"} <span className="text-base font-normal text-zinc-400">/ {limitLabel}</span>
@@ -53,7 +53,7 @@ async function SystemHealth() {
         ) : null}
       </section>
 
-      <section className="rounded-lg border border-zinc-800 p-5" aria-labelledby="config-heading">
+      <section className="studio-card rounded-xl p-5" aria-labelledby="config-heading">
         <h2 id="config-heading" className="font-medium">Configuration</h2>
         <p className="mt-2 text-sm text-zinc-400">
           {missing ? `${missing} required setting${missing === 1 ? " is" : "s are"} missing.` : "All required settings are present."}
@@ -73,7 +73,7 @@ async function SystemHealth() {
         </dl>
       </section>
 
-      <section className="rounded-lg border border-zinc-800 p-5" aria-labelledby="version-heading">
+      <section className="studio-card rounded-xl p-5" aria-labelledby="version-heading">
         <h2 id="version-heading" className="font-medium">App version</h2>
         <dl className="mt-3 space-y-2 text-sm">
           <div className="flex justify-between gap-4"><dt className="text-zinc-400">Version</dt><dd>{status.version}</dd></div>
@@ -82,7 +82,7 @@ async function SystemHealth() {
         </dl>
       </section>
 
-      <details className="rounded-lg border border-zinc-800 p-5">
+      <details className="studio-card rounded-xl p-5">
         <summary className="cursor-pointer text-sm font-medium">Advanced: test saving a track</summary>
         <DatabaseCheck />
       </details>
@@ -94,7 +94,7 @@ export default function Page() {
   return (
     <section className="max-w-3xl">
       <div className="flex items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold">Status</h1>
+        <h1 className="studio-title text-3xl font-bold">Status</h1>
         <a href="/status" className="rounded-md border border-zinc-700 px-4 py-2.5 text-sm hover:bg-zinc-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">Refresh checks</a>
       </div>
       <p className="mt-2 text-zinc-400">Your account, connection, and generation settings.</p>

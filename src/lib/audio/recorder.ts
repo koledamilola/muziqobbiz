@@ -4,6 +4,7 @@
 // - MDN MediaTrackConstraints: https://developer.mozilla.org/en-US/docs/Web/API/MediaTrackConstraints
 // - MDN BaseAudioContext.decodeAudioData: https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/decodeAudioData
 // - MDN BiquadFilterNode / DynamicsCompressorNode: https://developer.mozilla.org/en-US/docs/Web/API/BiquadFilterNode
+// - MDN processed capture: https://developer.mozilla.org/en-US/docs/Web/API/AudioContext/createMediaStreamDestination
 
 export const MAX_RECORDING_SECONDS = 180; // 3 minutes max length
 export const DEFAULT_WAVEFORM_BARS = 64;
@@ -22,13 +23,6 @@ export const SUPPORTED_RECORDING_MIME_TYPES = [
 // Browser echoCancellation and autoGainControl are built for speakerphone calls
 // and aggressively pump or hollow out singing. We keep them OFF and use our own
 // musical Web Audio vocal chain + smooth noise reduction instead.
-export const VOCAL_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
-  channelCount: 1,
-  echoCancellation: false,
-  noiseSuppression: false,
-  autoGainControl: false,
-};
-
 export function buildVocalAudioConstraints(options?: {
   noiseSuppression?: boolean;
 }): MediaTrackConstraints {
@@ -37,6 +31,60 @@ export function buildVocalAudioConstraints(options?: {
     echoCancellation: false,
     noiseSuppression: Boolean(options?.noiseSuppression),
     autoGainControl: false,
+  };
+}
+
+export function createVocalCaptureGraph(
+  context: AudioContext,
+  microphoneStream: MediaStream,
+  micBoost: number,
+): {
+  inputGain: GainNode;
+  analyser: AnalyserNode;
+  recordingStream: MediaStream;
+  nodes: AudioNode[];
+} {
+  const source = context.createMediaStreamSource(microphoneStream);
+  const highPass = context.createBiquadFilter();
+  highPass.type = "highpass";
+  highPass.frequency.setValueAtTime(85, context.currentTime);
+  highPass.Q.setValueAtTime(0.707, context.currentTime);
+
+  const inputGain = context.createGain();
+  inputGain.gain.setValueAtTime(micBoost, context.currentTime);
+
+  const presence = context.createBiquadFilter();
+  presence.type = "peaking";
+  presence.frequency.setValueAtTime(3200, context.currentTime);
+  presence.Q.setValueAtTime(1, context.currentTime);
+  presence.gain.setValueAtTime(3, context.currentTime);
+
+  const compressor = context.createDynamicsCompressor();
+  compressor.threshold.setValueAtTime(-24, context.currentTime);
+  compressor.knee.setValueAtTime(18, context.currentTime);
+  compressor.ratio.setValueAtTime(3, context.currentTime);
+  compressor.attack.setValueAtTime(0.008, context.currentTime);
+  compressor.release.setValueAtTime(0.18, context.currentTime);
+
+  const analyser = context.createAnalyser();
+  analyser.fftSize = 1024;
+  const destination = context.createMediaStreamDestination();
+  if (destination.stream.getAudioTracks().length === 0) {
+    throw new Error("Processed microphone stream has no audio track.");
+  }
+
+  source.connect(highPass);
+  highPass.connect(inputGain);
+  inputGain.connect(presence);
+  presence.connect(compressor);
+  compressor.connect(analyser);
+  compressor.connect(destination);
+
+  return {
+    inputGain,
+    analyser,
+    recordingStream: destination.stream,
+    nodes: [source, highPass, inputGain, presence, compressor, analyser, destination],
   };
 }
 
@@ -86,6 +134,7 @@ export function detectRecordingMimeType(
 
 export function normalizeMimeLabel(mimeType: string): string {
   const base = mimeType.split(";")[0]?.trim().toLowerCase();
+  if (base === "audio/wav" || base === "audio/wave") return "audio/wav (enhanced)";
   if (base === "audio/mp4" || base === "audio/x-m4a") return "audio/mp4 (AAC)";
   if (base === "audio/webm") return "audio/webm (Opus)";
   if (base) return base;
@@ -165,6 +214,7 @@ export function cleanAndNormalizeSamples(
   options?: {
     noiseGate?: boolean;
     normalize?: boolean;
+    highPass?: boolean;
     targetPeak?: number;
     maxBoost?: number;
   },
@@ -175,6 +225,7 @@ export function cleanAndNormalizeSamples(
 
   const enableGate = options?.noiseGate ?? true;
   const enableNormalize = options?.normalize ?? true;
+  const enableHighPass = options?.highPass ?? true;
   const targetPeak = options?.targetPeak ?? TARGET_VOCAL_PEAK;
   const maxBoost = options?.maxBoost ?? MAX_AUTO_GAIN_BOOST;
   const safeRate = Math.max(8000, Number.isFinite(sampleRate) ? sampleRate : 48000);
@@ -198,7 +249,9 @@ export function cleanAndNormalizeSamples(
 
   for (let i = 0; i < length; i++) {
     const centered = (input[i] ?? 0) - dcOffset;
-    const filtered = hpAlpha * (prevOut + centered - prevIn);
+    const filtered = enableHighPass
+      ? hpAlpha * (prevOut + centered - prevIn)
+      : centered;
     prevIn = centered;
     prevOut = filtered;
     output[i] = filtered;
@@ -213,7 +266,7 @@ export function cleanAndNormalizeSamples(
   // Step 3: Smooth soft-knee noise expander/gate relative to signal peak
   // Attenuates room hiss below ~3% of peak signal with fast attack (6ms) and slow release (150ms)
   if (enableGate) {
-    const gateThreshold = Math.min(0.025, Math.max(0.003, maxAbs * 0.035));
+    const gateThreshold = Math.min(0.015, Math.max(0.002, maxAbs * 0.025));
     const attackCoeff = Math.exp(-1 / (safeRate * 0.006));
     const releaseCoeff = Math.exp(-1 / (safeRate * 0.15));
     let envelope = 0;
@@ -246,13 +299,31 @@ export function cleanAndNormalizeSamples(
     }
   }
 
-  // Step 4: Peak loudness normalization to targetPeak (-1 dBFS)
+  // Step 4: Raise quiet phrases while a brief loud bump cannot set the gain
+  // for the whole take. Use the louder half of 20 ms windows to estimate voice
+  // level, then softly limit isolated peaks rather than hard-clipping them.
   if (enableNormalize && maxAbs > 0.001) {
-    const gain = Math.min(maxBoost, targetPeak / maxAbs);
+    const windowSize = Math.max(1, Math.floor(safeRate * 0.02));
+    const levels: number[] = [];
+    for (let start = 0; start < length; start += windowSize) {
+      let power = 0;
+      const end = Math.min(length, start + windowSize);
+      for (let i = start; i < end; i++) power += output[i] * output[i];
+      levels.push(Math.sqrt(power / (end - start)));
+    }
+    levels.sort((a, b) => a - b);
+    const voiceRms = levels[Math.floor(levels.length * 0.75)] ?? 0;
+    const gain = Math.min(
+      maxBoost,
+      Math.max(targetPeak / maxAbs, voiceRms > 0.002 ? 0.22 / voiceRms : 1),
+    );
     for (let i = 0; i < length; i++) {
       const amplified = output[i] * gain;
-      // Gentle soft-clip ceiling at +/- 0.98
-      output[i] = Math.max(-0.98, Math.min(0.98, amplified));
+      const magnitude = Math.abs(amplified);
+      const limited = magnitude <= 0.8
+        ? magnitude
+        : 0.8 + 0.18 * (1 - Math.exp(-(magnitude - 0.8) / 0.18));
+      output[i] = Math.sign(amplified) * limited;
     }
   }
 
@@ -310,6 +381,7 @@ export async function decodeRecordingBlob(
   options?: {
     noiseGate?: boolean;
     normalize?: boolean;
+    highPass?: boolean;
   },
 ): Promise<AudioBuffer> {
   if (audioContext.state === "suspended") {
@@ -350,4 +422,32 @@ export async function decodeRecordingBlob(
   }
 
   return rawBuffer;
+}
+
+// Keep the enhanced buffer as the take's actual file, not only its preview.
+export function encodeWavBlob(buffer: AudioBuffer): Blob {
+  const samples = buffer.getChannelData(0);
+  const data = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(data);
+  const writeText = (offset: number, value: string) => {
+    for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i));
+  };
+  writeText(0, "RIFF");
+  view.setUint32(4, data.byteLength - 8, true);
+  writeText(8, "WAVE");
+  writeText(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, buffer.sampleRate, true);
+  view.setUint32(28, buffer.sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeText(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) {
+    const sample = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(44 + i * 2, sample < 0 ? sample * 32768 : sample * 32767, true);
+  }
+  return new Blob([data], { type: "audio/wav" });
 }
