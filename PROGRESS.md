@@ -6,10 +6,10 @@ Every agent reads this at the start of a session and updates it at the end. The 
 
 ## Current status
 
-- **Current stage / step:** Stage 2.2 — Steady-hiss reduction implemented; owner headset listening test pending
+- **Current stage / step:** Stage 2.2 — Owner accepts current recording quality for now; ready to begin Step 2.3
 - **App URL (production):** https://muziqobbiz.vercel.app
-- **Last working checkpoint (git tag or commit):** `stage 2.2: reduce recorded vocal hiss` (automated and isolated browser checks pass; owner listening test pending)
-- **Next step:** Record a fresh wired-headset take with noise reduction enabled and a short quiet pause before singing; compare hiss and vocal tone on phone and desktop, then start Stage 2.3 — On-device analysis with `essentia.js`
+- **Last working checkpoint (git tag or commit):** `b18e015` — `stage 2.2: reduce recorded vocal hiss` (pushed to main; audio quality provisionally accepted by owner)
+- **Next step:** Stage 2.3 — On-device tempo, key/scale, and energy estimates with `essentia.js`, editable results, and known metronome BPM preserved
 - **Blockers:** None (`FAL_KEY` and `FAL_MINIMAX_MODEL_ID` are deferred and marked optional while ElevenLabs is used alone for now)
 
 ---
@@ -40,6 +40,7 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | 2026-10-06 | Kept create-next-app defaults for Next.js 16.4 (`cacheComponents`, `partialPrefetching` on in next.config.ts) | Scaffold default; revisit if it blocks auth/data pages in Stage 1.3 | Agent |
 | 2026-10-11 | Installed Node 24 LTS (v24.21.0) system-wide on Windows | Matches the project's selected LTS version and makes npm available in every terminal | Owner |
 | 2026-10-22 | Use ElevenLabs alone for now; defer FAL.AI (`FAL_KEY`, `FAL_MINIMAX_MODEL_ID`) until later | Owner currently has an ElevenLabs account only; Status treats FAL settings as optional until added | Owner |
+| 2026-10-22 | Accept the current recorder quality and defer further noise cleanup | Owner says the sound is imperfect but acceptable for now and wants to move on | Owner |
 
 ---
 
@@ -52,7 +53,8 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | Stage 1.4 hosted schema, storage and signed-in check | 1.4 | SQL and owner browser verified | Both migrations applied; owner CRUD and row isolation pass; three private buckets and storage RLS confirmed. Owner supplied the Status success message following local test instructions. Production/phone repeat and actual Storage API round-trip are untested. |
 | Stage 1.5 Status acceptance and provider configuration | 1.5 | Owner-verified live | Owner confirmed all four Status sections (`Owner verified`, `Reachable`, `0 / 25` today's generations, and `All required settings are present`). `FAL_KEY`, `FAL_MINIMAX_MODEL_ID`, and `MINIMAX_API_KEY` remain optional until added. |
 | Stage 2.1 Vocal recorder browser/phone verification | 2.1 | Owner-verified | Owner confirmed recording, Play take, Retake, and Keep take all work as expected. |
-| Stage 2.2 recorder and metronome verification | 2.2 | Automated and isolated browser checks pass; owner listening test pending | 28 tests, lint, typecheck, build, and generated-audio Chrome record/worker/play/keep check pass. Owner heard residual white hiss after the previous release; new spectral reduction precedes loudness boost and browser speech suppression is off. Real headset listening, Safari/mobile, click/count-in isolation, and visual acceptance remain pending. |
+| Stage 2.2 recorder and metronome verification | 2.2 | Recorder quality provisionally accepted; remaining device checks tracked | 28 tests, lint, typecheck, build, and generated-audio Chrome record/worker/play/keep check pass. Owner accepts current sound for now. Specific Safari/mobile, click/count-in isolation, and visual checks are not independently confirmed by this acceptance. |
+| Residual recording hiss | 2.2 | Deferred by owner | Current reduction is acceptable for now; revisit vocal clarity/noise reduction later without blocking Step 2.3. |
 
 ---
 
@@ -78,6 +80,12 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 ---
 
 ## Session log (newest first)
+
+### 2026-10-22 — Owner accepts current recorder quality for now
+- **Owner evidence:** "Its not perfect but i'll take this version for now, we can revisit later." Further noise cleanup is deferred; no claim of perfect audio or unreported device-test acceptance.
+- **What changed:** Recorded provisional acceptance and moved the next build step to 2.3, on-device tempo/key/energy analysis. Step 2.4 then saves kept takes; Stage 3 follows with beat generation using the owner's ElevenLabs-only decision.
+- **Validation:** Documentation-only update; diff checked. The unchanged application at `b18e015` already passed 28 tests, lint, typecheck, production build, and the isolated browser audio check. Those checks were not repeated for this log update.
+- **Exact next step:** When the owner starts Step 2.3, read current essentia.js docs and implement background analysis with editable estimates and metronome BPM priority. No new feature code was started in this recap.
 
 ### 2026-10-22 — Stage 2.2 steady-hiss reduction
 - **Owner feedback:** Residual white noise remained audible in recorded vocal playback after the previous polish release.
