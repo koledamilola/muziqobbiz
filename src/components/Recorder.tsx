@@ -2,6 +2,21 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  BEATS_PER_BAR,
+  clampMetronomeBpm,
+  clampMetronomeVolume,
+  computeScheduledBeatsInWindow,
+  countInDurationSec,
+  DEFAULT_METRONOME_BPM,
+  DEFAULT_METRONOME_VOLUME,
+  getBeatDisplayAtTime,
+  LOOKAHEAD_WINDOW_SEC,
+  MAX_METRONOME_BPM,
+  type MetronomeBeatDisplay,
+  MIN_METRONOME_BPM,
+  scheduleMetronomeClick,
+} from "@/lib/audio/metronome";
+import {
   classifyMicError,
   computeRmsLevel,
   computeWaveformPeaks,
@@ -15,7 +30,13 @@ import {
   VOCAL_AUDIO_CONSTRAINTS,
 } from "@/lib/audio/recorder";
 
-type RecorderPhase = "idle" | "requesting" | "recording" | "decoding" | "review";
+type RecorderPhase =
+  | "idle"
+  | "requesting"
+  | "count-in"
+  | "recording"
+  | "decoding"
+  | "review";
 
 type RecorderProps = {
   onKeepTake?: (take: RecordedTake) => void;
@@ -42,19 +63,50 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSec, setPlaybackSec] = useState(0);
 
+  // Metronome state (Stage 2.2)
+  const [metronomeEnabled, setMetronomeEnabled] = useState(false);
+  const [bpm, setBpm] = useState<number>(DEFAULT_METRONOME_BPM);
+  const [bpmInput, setBpmInput] = useState<string>(String(DEFAULT_METRONOME_BPM));
+  const [metronomeVolume, setMetronomeVolume] = useState<number>(
+    DEFAULT_METRONOME_VOLUME,
+  );
+  const [beatDisplay, setBeatDisplay] = useState<MetronomeBeatDisplay | null>(
+    null,
+  );
+  const [isPreviewingClick, setIsPreviewingClick] = useState(false);
+
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
-  const recordStartMsRef = useRef<number>(0);
+  const recordStartContextTimeRef = useRef<number>(0);
   const reachedMaxRef = useRef<boolean>(false);
+  const cancelledDuringCountInRef = useRef<boolean>(false);
   const meterFrameRef = useRef<number | null>(null);
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+
+  // Web Audio metronome scheduler refs
+  const nextBeatIndexRef = useRef<number>(0);
+  const metronomeStartContextTimeRef = useRef<number>(0);
+  const metronomeBpmRef = useRef<number>(DEFAULT_METRONOME_BPM);
+  const metronomeVolumeRef = useRef<number>(DEFAULT_METRONOME_VOLUME);
+  const previewFrameRef = useRef<number | null>(null);
 
   const playbackSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const playbackStartContextTimeRef = useRef<number>(0);
   const playbackOffsetSecRef = useRef<number>(0);
   const playbackFrameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    metronomeVolumeRef.current = metronomeVolume;
+  }, [metronomeVolume]);
+
+  const applyBpm = useCallback((rawValue: number) => {
+    const clamped = clampMetronomeBpm(rawValue);
+    setBpm(clamped);
+    setBpmInput(String(clamped));
+    metronomeBpmRef.current = clamped;
+  }, []);
 
   const ensureAudioContext = useCallback(async (): Promise<AudioContext> => {
     let ctx = audioContextRef.current;
@@ -71,6 +123,15 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
       await ctx.resume();
     }
     return ctx;
+  }, []);
+
+  const stopClickPreview = useCallback(() => {
+    if (previewFrameRef.current !== null) {
+      cancelAnimationFrame(previewFrameRef.current);
+      previewFrameRef.current = null;
+    }
+    setIsPreviewingClick(false);
+    setBeatDisplay(null);
   }, []);
 
   const stopMicStream = useCallback(() => {
@@ -91,6 +152,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
       mediaStreamRef.current = null;
     }
     setInputLevel(0);
+    setBeatDisplay(null);
   }, []);
 
   const stopPlayback = useCallback((resetPosition = false) => {
@@ -118,6 +180,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
 
   useEffect(() => {
     return () => {
+      stopClickPreview();
       stopPlayback(true);
       stopMicStream();
       if (
@@ -134,21 +197,77 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
         void audioContextRef.current.close().catch(() => {});
       }
     };
-  }, [stopMicStream, stopPlayback]);
+  }, [stopClickPreview, stopMicStream, stopPlayback]);
+
+  const toggleClickPreview = useCallback(async () => {
+    if (isPreviewingClick) {
+      stopClickPreview();
+      return;
+    }
+
+    stopPlayback(true);
+    const ctx = await ensureAudioContext();
+    const activeBpm = clampMetronomeBpm(bpm);
+    metronomeBpmRef.current = activeBpm;
+    const startContextTime = ctx.currentTime + 0.05;
+    metronomeStartContextTimeRef.current = startContextTime;
+    nextBeatIndexRef.current = 0;
+    setIsPreviewingClick(true);
+
+    const tickPreview = () => {
+      const now = ctx.currentTime;
+      const beats = computeScheduledBeatsInWindow({
+        startContextTime: metronomeStartContextTimeRef.current,
+        bpm: metronomeBpmRef.current,
+        fromBeatIndex: nextBeatIndexRef.current,
+        windowEndContextTime: now + LOOKAHEAD_WINDOW_SEC,
+        includeCountIn: false,
+      });
+
+      for (const beat of beats) {
+        scheduleMetronomeClick(ctx, beat, metronomeVolumeRef.current);
+        nextBeatIndexRef.current = beat.beatIndex + 1;
+      }
+
+      if (now >= metronomeStartContextTimeRef.current) {
+        setBeatDisplay(
+          getBeatDisplayAtTime({
+            startContextTime: metronomeStartContextTimeRef.current,
+            currentContextTime: now,
+            bpm: metronomeBpmRef.current,
+            includeCountIn: false,
+          }),
+        );
+      }
+
+      previewFrameRef.current = requestAnimationFrame(tickPreview);
+    };
+
+    previewFrameRef.current = requestAnimationFrame(tickPreview);
+  }, [bpm, ensureAudioContext, isPreviewingClick, stopClickPreview, stopPlayback]);
 
   const stopRecording = useCallback(() => {
     const recorder = mediaRecorderRef.current;
-    if (recorder && recorder.state !== "inactive") {
-      try {
-        recorder.stop();
-      } catch {
-        stopMicStream();
-        setPhase("idle");
-      }
+    // If the user stops during the 1-bar count-in before MediaRecorder has started,
+    // cancel cleanly back to idle without saving an empty take.
+    if (!recorder || recorder.state === "inactive") {
+      cancelledDuringCountInRef.current = true;
+      stopMicStream();
+      setElapsedSec(0);
+      setPhase("idle");
+      return;
+    }
+
+    try {
+      recorder.stop();
+    } catch {
+      stopMicStream();
+      setPhase("idle");
     }
   }, [stopMicStream]);
 
   const startRecording = useCallback(async () => {
+    stopClickPreview();
     stopPlayback(true);
     setMicError(null);
     setDecodeError(null);
@@ -189,8 +308,12 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
       mediaRecorderRef.current = recorder;
       chunksRef.current = [];
       reachedMaxRef.current = false;
-      recordStartMsRef.current = performance.now();
+      cancelledDuringCountInRef.current = false;
       setElapsedSec(0);
+
+      const useClick = metronomeEnabled;
+      const lockedBpm = clampMetronomeBpm(bpm);
+      metronomeBpmRef.current = lockedBpm;
 
       // Set up live input level meter via Web Audio AnalyserNode.
       const sourceNode = audioContext.createMediaStreamSource(stream);
@@ -199,25 +322,6 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
       analyser.fftSize = 1024;
       sourceNode.connect(analyser);
       const sampleBuffer = new Float32Array(analyser.fftSize);
-
-      const updateMeterAndTimer = () => {
-        analyser.getFloatTimeDomainData(sampleBuffer);
-        setInputLevel(computeRmsLevel(sampleBuffer));
-
-        const elapsed = (performance.now() - recordStartMsRef.current) / 1000;
-        const clampedElapsed = Math.min(MAX_RECORDING_SECONDS, elapsed);
-        setElapsedSec(clampedElapsed);
-
-        if (elapsed >= MAX_RECORDING_SECONDS) {
-          reachedMaxRef.current = true;
-          if (recorder.state !== "inactive") {
-            recorder.stop();
-          }
-          return;
-        }
-
-        meterFrameRef.current = requestAnimationFrame(updateMeterAndTimer);
-      };
 
       recorder.ondataavailable = (event: BlobEvent) => {
         if (event.data && event.data.size > 0) {
@@ -233,6 +337,12 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
 
       recorder.onstop = async () => {
         stopMicStream();
+        if (cancelledDuringCountInRef.current) {
+          chunksRef.current = [];
+          setPhase("idle");
+          return;
+        }
+
         setPhase("decoding");
 
         try {
@@ -259,6 +369,9 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
             sampleRate: audioBuffer.sampleRate,
             createdAt: new Date().toISOString(),
             reachedMaxLength: reachedMaxRef.current,
+            // Store BPM as "known" (high confidence) when recorded with the metronome.
+            bpm: useClick ? lockedBpm : null,
+            bpmConfidence: useClick ? "known" : null,
           };
 
           setTake(recordedTake);
@@ -273,20 +386,103 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
         }
       };
 
-      // Collect chunks every 250ms so both short and 3-minute takes assemble reliably on mobile.
-      recorder.start(250);
-      setPhase("recording");
-      meterFrameRef.current = requestAnimationFrame(updateMeterAndTimer);
+      const startClockTime = audioContext.currentTime + 0.06;
+      metronomeStartContextTimeRef.current = startClockTime;
+      nextBeatIndexRef.current = 0;
+
+      const countInSec = useClick ? countInDurationSec(lockedBpm) : 0;
+      const recordingStartClockTime = startClockTime + countInSec;
+      recordStartContextTimeRef.current = recordingStartClockTime;
+
+      let recorderStarted = false;
+      if (!useClick) {
+        recorder.start(250);
+        recorderStarted = true;
+        setPhase("recording");
+      } else {
+        setPhase("count-in");
+      }
+
+      const updateLoop = () => {
+        analyser.getFloatTimeDomainData(sampleBuffer);
+        setInputLevel(computeRmsLevel(sampleBuffer));
+
+        const now = audioContext.currentTime;
+
+        if (useClick) {
+          // Schedule upcoming clicks strictly on the Web Audio clock within the lookahead window.
+          const beatsToSchedule = computeScheduledBeatsInWindow({
+            startContextTime: startClockTime,
+            bpm: lockedBpm,
+            fromBeatIndex: nextBeatIndexRef.current,
+            windowEndContextTime: now + LOOKAHEAD_WINDOW_SEC,
+            includeCountIn: true,
+          });
+
+          for (const beat of beatsToSchedule) {
+            scheduleMetronomeClick(
+              audioContext,
+              beat,
+              metronomeVolumeRef.current,
+            );
+            nextBeatIndexRef.current = beat.beatIndex + 1;
+          }
+
+          if (now >= startClockTime) {
+            setBeatDisplay(
+              getBeatDisplayAtTime({
+                startContextTime: startClockTime,
+                currentContextTime: now,
+                bpm: lockedBpm,
+                includeCountIn: true,
+              }),
+            );
+          }
+
+          // Start MediaRecorder right as the 1-bar (4-beat) count-in finishes on the Web Audio clock.
+          if (!recorderStarted && now >= recordingStartClockTime) {
+            recorderStarted = true;
+            recorder.start(250);
+            setPhase("recording");
+          }
+        }
+
+        if (recorderStarted) {
+          const elapsed = Math.max(0, now - recordStartContextTimeRef.current);
+          const clampedElapsed = Math.min(MAX_RECORDING_SECONDS, elapsed);
+          setElapsedSec(clampedElapsed);
+
+          if (elapsed >= MAX_RECORDING_SECONDS) {
+            reachedMaxRef.current = true;
+            if (recorder.state !== "inactive") {
+              recorder.stop();
+            }
+            return;
+          }
+        }
+
+        meterFrameRef.current = requestAnimationFrame(updateLoop);
+      };
+
+      meterFrameRef.current = requestAnimationFrame(updateLoop);
     } catch (error) {
       stopMicStream();
       setMicError(classifyMicError(error));
       setPhase("idle");
     }
-  }, [ensureAudioContext, stopMicStream, stopPlayback]);
+  }, [
+    bpm,
+    ensureAudioContext,
+    metronomeEnabled,
+    stopClickPreview,
+    stopMicStream,
+    stopPlayback,
+  ]);
 
   const startPlaybackFrom = useCallback(
     async (offsetSec: number) => {
       if (!take) return;
+      stopClickPreview();
       stopPlayback(false);
 
       const ctx = await ensureAudioContext();
@@ -333,7 +529,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
       source.start(0, safeOffset);
       playbackFrameRef.current = requestAnimationFrame(updatePlayhead);
     },
-    [ensureAudioContext, stopPlayback, take],
+    [ensureAudioContext, stopClickPreview, stopPlayback, take],
   );
 
   const togglePlayback = useCallback(async () => {
@@ -362,13 +558,14 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
   }, [isPlaying, startPlaybackFrom, stopPlayback, take]);
 
   const handleRetake = useCallback(() => {
+    stopClickPreview();
     stopPlayback(true);
     setTake(null);
     setIsKept(false);
     setDecodeError(null);
     setElapsedSec(0);
     setPhase("idle");
-  }, [stopPlayback]);
+  }, [stopClickPreview, stopPlayback]);
 
   const handleKeep = useCallback(() => {
     if (!take) return;
@@ -377,10 +574,18 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
   }, [onKeepTake, take]);
 
   const meterPercent = Math.round(inputLevel * 100);
+  const volumePercent = Math.round(
+    clampMetronomeVolume(metronomeVolume) * 100,
+  );
   const playbackProgress =
     take && take.durationSec > 0
       ? Math.min(1, Math.max(0, playbackSec / take.durationSec))
       : 0;
+  const controlsLocked =
+    phase === "requesting" ||
+    phase === "count-in" ||
+    phase === "recording" ||
+    phase === "decoding";
 
   return (
     <div className="mt-6 space-y-6">
@@ -393,10 +598,15 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
               {formatDuration(MAX_RECORDING_SECONDS)}.
             </p>
           </div>
-          {phase === "recording" ? (
+          {phase === "count-in" ? (
+            <span className="inline-flex items-center gap-2 rounded-full bg-amber-950/80 px-3 py-1 text-xs font-medium text-amber-200 ring-1 ring-amber-700">
+              <span className="h-2 w-2 animate-ping rounded-full bg-amber-400" />
+              Count-in ({bpm} BPM)
+            </span>
+          ) : phase === "recording" ? (
             <span className="inline-flex items-center gap-2 rounded-full bg-red-950/80 px-3 py-1 text-xs font-medium text-red-200 ring-1 ring-red-800">
               <span className="h-2 w-2 animate-pulse rounded-full bg-red-400" />
-              Recording
+              Recording{metronomeEnabled ? ` · ${bpm} BPM` : ""}
             </span>
           ) : phase === "review" && take ? (
             <span
@@ -408,6 +618,193 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
             >
               {isKept ? "Take kept" : "Ready to review"}
             </span>
+          ) : null}
+        </div>
+
+        {/* Optional Metronome & 1-Bar Count-In Panel (Stage 2.2) */}
+        <div className="mt-5 rounded-lg border border-zinc-800/90 bg-zinc-900/35 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <label className="inline-flex cursor-pointer items-center gap-3 select-none">
+              <input
+                type="checkbox"
+                checked={metronomeEnabled}
+                disabled={controlsLocked}
+                onChange={(event) => {
+                  const nextChecked = event.target.checked;
+                  setMetronomeEnabled(nextChecked);
+                  if (!nextChecked && isPreviewingClick) {
+                    stopClickPreview();
+                  }
+                }}
+                className="h-4 w-4 rounded border-zinc-600 bg-zinc-900 text-emerald-500 focus:ring-2 focus:ring-emerald-400 disabled:opacity-50"
+              />
+              <span className="text-sm font-medium text-zinc-100">
+                Metronome click &amp; 1-bar count-in
+              </span>
+            </label>
+            <span className="rounded bg-zinc-800/90 px-2.5 py-0.5 font-mono text-xs text-zinc-300">
+              4/4 time · Accent beat 1
+            </span>
+          </div>
+
+          {metronomeEnabled ? (
+            <div className="mt-4 space-y-4 border-t border-zinc-800/80 pt-4">
+              <p className="rounded-md border border-amber-800/60 bg-amber-950/35 px-3 py-2 text-xs text-amber-200">
+                Use wired headphones so the click isn&apos;t recorded.
+              </p>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                {/* BPM Input, Step Buttons & Slider */}
+                <div>
+                  <div className="flex items-center justify-between gap-2">
+                    <label
+                      htmlFor="metronome-bpm-input"
+                      className="text-xs font-medium text-zinc-300"
+                    >
+                      Tempo (BPM, {MIN_METRONOME_BPM}–{MAX_METRONOME_BPM})
+                    </label>
+                    <span className="font-mono text-xs text-emerald-300">
+                      {bpm} BPM (known)
+                    </span>
+                  </div>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={controlsLocked || bpm <= MIN_METRONOME_BPM}
+                      onClick={() => applyBpm(bpm - 5)}
+                      className="rounded border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 font-mono text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-40"
+                    >
+                      -5
+                    </button>
+                    <button
+                      type="button"
+                      disabled={controlsLocked || bpm <= MIN_METRONOME_BPM}
+                      onClick={() => applyBpm(bpm - 1)}
+                      className="rounded border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 font-mono text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-40"
+                    >
+                      -1
+                    </button>
+                    <input
+                      id="metronome-bpm-input"
+                      type="number"
+                      inputMode="numeric"
+                      min={MIN_METRONOME_BPM}
+                      max={MAX_METRONOME_BPM}
+                      value={bpmInput}
+                      disabled={controlsLocked}
+                      onChange={(event) => {
+                        setBpmInput(event.target.value);
+                        const parsed = Number(event.target.value);
+                        if (
+                          Number.isFinite(parsed) &&
+                          parsed >= MIN_METRONOME_BPM &&
+                          parsed <= MAX_METRONOME_BPM
+                        ) {
+                          const rounded = Math.round(parsed);
+                          setBpm(rounded);
+                          metronomeBpmRef.current = rounded;
+                        }
+                      }}
+                      onBlur={() => applyBpm(Number(bpmInput))}
+                      className="w-20 rounded border border-zinc-700 bg-zinc-950 px-2.5 py-1.5 text-center font-mono text-sm text-zinc-100 focus:border-zinc-400 focus:outline-none disabled:opacity-50"
+                    />
+                    <button
+                      type="button"
+                      disabled={controlsLocked || bpm >= MAX_METRONOME_BPM}
+                      onClick={() => applyBpm(bpm + 1)}
+                      className="rounded border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 font-mono text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-40"
+                    >
+                      +1
+                    </button>
+                    <button
+                      type="button"
+                      disabled={controlsLocked || bpm >= MAX_METRONOME_BPM}
+                      onClick={() => applyBpm(bpm + 5)}
+                      className="rounded border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 font-mono text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-40"
+                    >
+                      +5
+                    </button>
+                  </div>
+                  <input
+                    type="range"
+                    aria-label="Tempo BPM slider"
+                    min={MIN_METRONOME_BPM}
+                    max={MAX_METRONOME_BPM}
+                    value={bpm}
+                    disabled={controlsLocked}
+                    onChange={(event) => applyBpm(Number(event.target.value))}
+                    className="mt-2 w-full accent-emerald-400 disabled:opacity-50"
+                  />
+                </div>
+
+                {/* Click Volume & Test Click Button */}
+                <div className="flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between text-xs">
+                      <label
+                        htmlFor="metronome-volume"
+                        className="font-medium text-zinc-300"
+                      >
+                        Click volume
+                      </label>
+                      <span className="font-mono tabular-nums text-zinc-400">
+                        {volumePercent}%
+                      </span>
+                    </div>
+                    <input
+                      id="metronome-volume"
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={volumePercent}
+                      onChange={(event) =>
+                        setMetronomeVolume(
+                          clampMetronomeVolume(Number(event.target.value) / 100),
+                        )
+                      }
+                      className="mt-2 w-full accent-emerald-400"
+                    />
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <button
+                      type="button"
+                      disabled={controlsLocked}
+                      onClick={() => void toggleClickPreview()}
+                      className="inline-flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 hover:bg-zinc-800 disabled:opacity-40"
+                    >
+                      {isPreviewingClick ? "Stop click test" : "Test click"}
+                    </button>
+
+                    {/* 4-beat visual pulse indicator */}
+                    <div
+                      aria-label="4/4 beat indicator"
+                      className="flex items-center gap-1.5"
+                    >
+                      {Array.from({ length: BEATS_PER_BAR }, (_, idx) => {
+                        const beatNumber = (idx + 1) as 1 | 2 | 3 | 4;
+                        const isActive = beatDisplay?.beatInBar === beatNumber;
+                        const isAccentBeat = beatNumber === 1;
+                        return (
+                          <span
+                            key={beatNumber}
+                            className={`flex h-6 w-6 items-center justify-center rounded-full font-mono text-xs font-semibold transition-transform ${
+                              isActive
+                                ? isAccentBeat
+                                  ? "scale-110 bg-amber-400 text-zinc-950"
+                                  : "scale-105 bg-emerald-400 text-zinc-950"
+                                : "bg-zinc-800 text-zinc-400"
+                            }`}
+                          >
+                            {beatNumber}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           ) : null}
         </div>
 
@@ -459,22 +856,35 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
           </div>
         ) : null}
 
-        {/* Idle / Requesting / Recording / Decoding Controls */}
+        {/* Idle / Requesting / Count-in / Recording / Decoding Controls */}
         {phase !== "review" ? (
           <div className="mt-6 flex flex-col items-center rounded-lg border border-zinc-800/80 bg-zinc-900/40 p-6 text-center">
-            <div className="font-mono text-3xl font-semibold tabular-nums tracking-tight sm:text-4xl">
-              {formatDuration(elapsedSec)}{" "}
-              <span className="text-lg font-normal text-zinc-500">
-                / {formatDuration(MAX_RECORDING_SECONDS)}
-              </span>
-            </div>
+            {phase === "count-in" ? (
+              <div role="status" aria-live="polite" className="mb-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-amber-300">
+                  1-Bar Count-In · Get ready to sing
+                </p>
+                <p className="mt-1 font-mono text-4xl font-bold text-amber-300 sm:text-5xl">
+                  Beat {beatDisplay?.beatInBar ?? 1} of 4
+                </p>
+              </div>
+            ) : (
+              <div className="font-mono text-3xl font-semibold tabular-nums tracking-tight sm:text-4xl">
+                {formatDuration(elapsedSec)}{" "}
+                <span className="text-lg font-normal text-zinc-500">
+                  / {formatDuration(MAX_RECORDING_SECONDS)}
+                </span>
+              </div>
+            )}
 
             {/* Live Input Level Meter */}
             <div className="mt-5 w-full max-w-md">
               <div className="flex items-center justify-between text-xs text-zinc-400">
                 <span id="mic-level-label">Input level</span>
                 <span className="font-mono tabular-nums">
-                  {phase === "recording" ? `${meterPercent}%` : "—"}
+                  {phase === "recording" || phase === "count-in"
+                    ? `${meterPercent}%`
+                    : "—"}
                 </span>
               </div>
               <div
@@ -482,7 +892,9 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
                 aria-labelledby="mic-level-label"
                 aria-valuemin={0}
                 aria-valuemax={100}
-                aria-valuenow={phase === "recording" ? meterPercent : 0}
+                aria-valuenow={
+                  phase === "recording" || phase === "count-in" ? meterPercent : 0
+                }
                 className="mt-1.5 h-3 w-full overflow-hidden rounded-full bg-zinc-800"
               >
                 <div
@@ -493,30 +905,38 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
                         ? "bg-amber-400"
                         : "bg-emerald-400"
                   }`}
-                  style={{ width: `${phase === "recording" ? meterPercent : 0}%` }}
+                  style={{
+                    width: `${
+                      phase === "recording" || phase === "count-in"
+                        ? meterPercent
+                        : 0
+                    }%`,
+                  }}
                 />
               </div>
               <p className="mt-1.5 text-xs text-zinc-500">
-                {phase === "recording"
-                  ? meterPercent > 88
-                    ? "Strong signal — step back slightly if it clips."
-                    : meterPercent > 8
-                      ? "Good vocal level."
-                      : "Sing or hum into your mic…"
-                  : "Use wired headphones when possible for the cleanest vocal take."}
+                {phase === "count-in"
+                  ? "Recording starts automatically after beat 4…"
+                  : phase === "recording"
+                    ? meterPercent > 88
+                      ? "Strong signal — step back slightly if it clips."
+                      : meterPercent > 8
+                        ? "Good vocal level."
+                        : "Sing or hum into your mic…"
+                    : "Use wired headphones when possible for the cleanest vocal take."}
               </p>
             </div>
 
             {/* Primary Record / Stop Button */}
             <div className="mt-6">
-              {phase === "recording" ? (
+              {phase === "recording" || phase === "count-in" ? (
                 <button
                   type="button"
                   onClick={stopRecording}
                   className="inline-flex min-h-14 min-w-52 items-center justify-center gap-3 rounded-full bg-zinc-100 px-8 py-4 text-base font-semibold text-zinc-950 shadow-lg hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
                 >
                   <span className="h-3.5 w-3.5 rounded-xs bg-red-600" />
-                  Stop recording
+                  {phase === "count-in" ? "Cancel count-in" : "Stop recording"}
                 </button>
               ) : (
                 <button
@@ -530,7 +950,9 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
                     ? "Allow microphone…"
                     : phase === "decoding"
                       ? "Decoding take…"
-                      : "Record vocal"}
+                      : metronomeEnabled
+                        ? `Count-in & Record (${bpm} BPM)`
+                        : "Record vocal"}
                 </button>
               )}
             </div>
@@ -554,6 +976,15 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
                 </span>
               </div>
               <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
+                {take.bpm !== null && take.bpmConfidence === "known" ? (
+                  <span className="rounded bg-emerald-950/90 px-2 py-0.5 font-mono text-emerald-300 ring-1 ring-emerald-800">
+                    {take.bpm} BPM · Known (metronome)
+                  </span>
+                ) : (
+                  <span className="rounded bg-zinc-800 px-2 py-0.5 font-mono text-zinc-300">
+                    Free tempo (no click)
+                  </span>
+                )}
                 <span className="rounded bg-zinc-800 px-2 py-0.5 font-mono text-zinc-300">
                   {normalizeMimeLabel(take.mimeType)}
                 </span>
@@ -641,10 +1072,13 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
                 role="status"
                 className="rounded-lg border border-emerald-800/70 bg-emerald-950/40 p-3.5 text-xs text-emerald-200"
               >
-                Take kept in memory ({formatDuration(take.durationSec)}, decoded{" "}
-                {take.audioBuffer.length.toLocaleString()} samples). Tempo/key detection
-                (Step 2.3) and saving to your library (Step 2.4) will use this decoded
-                take.
+                Take kept in memory ({formatDuration(take.durationSec)}
+                {take.bpm !== null
+                  ? `, ${take.bpm} BPM known from metronome`
+                  : ", free tempo"}
+                , decoded {take.audioBuffer.length.toLocaleString()} samples). Tempo/key
+                detection (Step 2.3) and saving to your library (Step 2.4) will use this
+                decoded take.
               </div>
             ) : null}
           </div>
@@ -653,4 +1087,3 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
     </div>
   );
 }
-

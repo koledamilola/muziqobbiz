@@ -34,6 +34,8 @@ export type RecordedTake = {
   sampleRate: number;
   createdAt: string;
   reachedMaxLength: boolean;
+  bpm: number | null;
+  bpmConfidence: "known" | null;
 };
 
 export type MicErrorInfo = {
