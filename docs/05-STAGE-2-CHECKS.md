@@ -1,6 +1,6 @@
 # Stage 2 — Recorder, analysis, and saving
 
-The implementation is local. The owner requested no push until the stage is completed. Do not tick Stage 2, tag `stage-2-done`, or push while the remaining acceptance checks below are unverified.
+The owner has authorized publishing the verified implementation to main, superseding the earlier push hold. Do not tick Stage 2 or tag `stage-2-done` while the remaining acceptance checks below are unverified.
 
 ## Owner check on this computer
 
@@ -19,7 +19,7 @@ An unsaved take still exists only in this tab. If saving fails, keep the tab ope
 
 Repeat the recording/count-in, analysis/editing, and save/playback checks in the target phone browser. Confirm the analyzer finishes in a reasonable time and the page remains responsive. Cover iPhone Safari and Android Chrome as available; do not assume a desktop Chrome fixture verifies either.
 
-Microphone capture requires a secure context. `localhost` is suitable on this computer, but an ordinary `http://<computer-IP>:3000` address on a phone will generally block the microphone. Phone acceptance needs a trusted HTTPS test environment; no preview deployment or Git push was created in this session. Keep this limitation explicit when closing the stage gate.
+Microphone capture requires a secure context. `localhost` is suitable on this computer, but an ordinary `http://<computer-IP>:3000` address on a phone will generally block the microphone. After the authorized push, confirm Vercel has deployed the new commit before testing at https://muziqobbiz.vercel.app/muziqobbiz. Phone acceptance remains pending until these checks pass there or in another trusted HTTPS environment.
 
 ## Implementation notes
 
@@ -52,6 +52,6 @@ Run `npm test`, `npm run lint`, `npm run typecheck`, and `npm run build`.
 | Server secrets excluded from client | PASS | Compiled client assets scanned against configured server-only values, with no matches. |
 | Required quality checks | PASS | 36 tests, lint, typecheck, production build. |
 
-Stage 2 is **not yet tagged complete** because manual acceptance is still pending. No Stage 2 changes have been pushed.
+Stage 2 is **not yet tagged complete** because manual acceptance is still pending. Publication to main is authorized; a Git push does not establish deployment success or manual acceptance.
 
 Dependency review: `npm audit --omit=dev` reports zero vulnerabilities. Full audit reports a pre-existing development-only `braces`/`micromatch` chain in Next's ESLint tooling (five high-severity entries). npm proposes downgrading `eslint-config-next` to Next 14, which conflicts with this project's Next 16 setup; no forced downgrade was applied.

@@ -8,9 +8,9 @@ Every agent reads this at the start of a session and updates it at the end. The 
 
 - **Current stage / step:** Stage 2.3/2.4 implemented locally — analysis and private saving pass automated checks; P8 manual acceptance pending
 - **App URL (production):** https://muziqobbiz.vercel.app
-- **Last working checkpoint (git tag or commit):** `b18e015` — `stage 2.2: reduce recorded vocal hiss` (pushed to main; audio quality provisionally accepted by owner)
-- **Next step:** Owner checks the signed-in flow at http://localhost:3000/muziqobbiz, including analysis edits, Keep & save take, and saved playback. Complete remaining Stage 2 phone/count-in checks before tagging/pushing the stage.
-- **Blockers:** Manual stage-gate checks remain unverified. Owner requested no push until Stage 2 is complete. `FAL_KEY` and `FAL_MINIMAX_MODEL_ID` remain optional/deferred for the later ElevenLabs-only generation work.
+- **Last working checkpoint (git tag or commit):** `c725597` — `stage 2.4: add vocal analysis and private take saving` (automated checks passed; owner authorized publication to main)
+- **Next step:** Publish the verified commit to main as requested, then check the signed-in analysis/edit/save/playback flow and remaining phone/count-in behavior. Keep Stage 2 unchecked and untagged until manual acceptance passes.
+- **Blockers:** Manual stage-gate checks remain unverified. The owner's latest request authorizes pushing now, superseding the earlier hold. `FAL_KEY` and `FAL_MINIMAX_MODEL_ID` remain optional/deferred for the later ElevenLabs-only generation work.
 
 ---
 
@@ -43,6 +43,7 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | 2026-10-22 | Accept the current recorder quality and defer further noise cleanup | Owner says the sound is imperfect but acceptable for now and wants to move on | Owner |
 | 2026-10-22 | Keep all remaining Stage 2 changes local; push only after stage completion | Owner explicitly requested finishing Stage 2 before pushing | Owner |
 | 2026-10-22 | Use pinned Essentia 0.1.3 with self-hosted worker assets; TUS 4.3.1 for direct private vocal uploads | Planned on-device analysis; WAV takes can exceed the recommended 6 MiB standard-upload size and need progress/retry support | Agent |
+| 2026-10-22 | Publish the verified Stage 2 implementation to main now; manual acceptance and completion tag remain pending | Owner's latest request, "push commit to main", supersedes the earlier push hold | Owner |
 
 ---
 
@@ -89,6 +90,13 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 ---
 
 ## Session log (newest first)
+
+### 2026-10-22 — Publication to main authorized
+
+- **Owner request:** Push the current commit to main now, superseding the earlier hold until stage completion.
+- **Checkpoint:** `c725597` contains the verified analysis and private saving implementation. Its 36 tests, lint, typecheck, and production build passed; this publication update changes documentation only.
+- **Stage gate:** Real signed-in save/playback and remaining phone/count-in checks are still pending. Stage 2 remains unchecked and untagged.
+- **Next step:** Push main, confirm the deployment contains the new commit, then complete the owner checks in `docs/05-STAGE-2-CHECKS.md`.
 
 ### 2026-10-22 — Stage 2 analysis and saving implementation; local acceptance pending
 - **Owner scope:** Continue the rest of Stage 2 and do not push until the stage is complete. Previous noise-reduction quality remains accepted for now; no further audio tuning performed.
