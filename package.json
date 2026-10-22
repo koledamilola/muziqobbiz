@@ -3,18 +3,24 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "postinstall": "node scripts/prepare-audio-assets.mjs",
+    "predev": "node scripts/prepare-audio-assets.mjs",
+    "prebuild": "node scripts/prepare-audio-assets.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --test-isolation=none tests/analysis-engine.test.mjs tests/stage2.test.mjs tests/recorder.test.mjs tests/status.test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",
     "@supabase/supabase-js": "2.117.3",
+    "essentia.js": "0.1.3",
     "next": "16.4.2",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "tus-js-client": "4.3.1"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",

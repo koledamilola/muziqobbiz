@@ -6,11 +6,11 @@ Every agent reads this at the start of a session and updates it at the end. The 
 
 ## Current status
 
-- **Current stage / step:** Stage 2.2 — Owner accepts current recording quality for now; ready to begin Step 2.3
+- **Current stage / step:** Stage 2.3/2.4 implemented locally — analysis and private saving pass automated checks; P8 manual acceptance pending
 - **App URL (production):** https://muziqobbiz.vercel.app
 - **Last working checkpoint (git tag or commit):** `b18e015` — `stage 2.2: reduce recorded vocal hiss` (pushed to main; audio quality provisionally accepted by owner)
-- **Next step:** Stage 2.3 — On-device tempo, key/scale, and energy estimates with `essentia.js`, editable results, and known metronome BPM preserved
-- **Blockers:** None (`FAL_KEY` and `FAL_MINIMAX_MODEL_ID` are deferred and marked optional while ElevenLabs is used alone for now)
+- **Next step:** Owner checks the signed-in flow at http://localhost:3000/muziqobbiz, including analysis edits, Keep & save take, and saved playback. Complete remaining Stage 2 phone/count-in checks before tagging/pushing the stage.
+- **Blockers:** Manual stage-gate checks remain unverified. Owner requested no push until Stage 2 is complete. `FAL_KEY` and `FAL_MINIMAX_MODEL_ID` remain optional/deferred for the later ElevenLabs-only generation work.
 
 ---
 
@@ -41,6 +41,8 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | 2026-10-11 | Installed Node 24 LTS (v24.21.0) system-wide on Windows | Matches the project's selected LTS version and makes npm available in every terminal | Owner |
 | 2026-10-22 | Use ElevenLabs alone for now; defer FAL.AI (`FAL_KEY`, `FAL_MINIMAX_MODEL_ID`) until later | Owner currently has an ElevenLabs account only; Status treats FAL settings as optional until added | Owner |
 | 2026-10-22 | Accept the current recorder quality and defer further noise cleanup | Owner says the sound is imperfect but acceptable for now and wants to move on | Owner |
+| 2026-10-22 | Keep all remaining Stage 2 changes local; push only after stage completion | Owner explicitly requested finishing Stage 2 before pushing | Owner |
+| 2026-10-22 | Use pinned Essentia 0.1.3 with self-hosted worker assets; TUS 4.3.1 for direct private vocal uploads | Planned on-device analysis; WAV takes can exceed the recommended 6 MiB standard-upload size and need progress/retry support | Agent |
 
 ---
 
@@ -55,6 +57,11 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | Stage 2.1 Vocal recorder browser/phone verification | 2.1 | Owner-verified | Owner confirmed recording, Play take, Retake, and Keep take all work as expected. |
 | Stage 2.2 recorder and metronome verification | 2.2 | Recorder quality provisionally accepted; remaining device checks tracked | 28 tests, lint, typecheck, build, and generated-audio Chrome record/worker/play/keep check pass. Owner accepts current sound for now. Specific Safari/mobile, click/count-in isolation, and visual checks are not independently confirmed by this acceptance. |
 | Residual recording hiss | 2.2 | Deferred by owner | Current reduction is acceptable for now; revisit vocal clarity/noise reduction later without blocking Step 2.3. |
+| Stage 2.3 analysis acceptance | 2.3 | Code and fixtures pass; real phone take untested | Engine and built browser detect generated C-major/120 BPM input; editable overrides and known 90 BPM pass. 45-second analysis excerpt bounds work; real solo-vocal quality and phone speed need owner verification. |
+| Stage 2.4 save acceptance | 2.4 | Hosted backend and fixture UI pass; signed-in browser test pending | 70-second generated WAV uploads using POST + PATCH, saved row and signed playback match, retry reuses row, exact test data cleaned up. Backend fixture uses admin privileges and does not verify the owner's session/RLS. Local owner test was requested. |
+| Unsaved browser history navigation | 2.4 | Device-dependent limitation | Warnings cover page reload/close, app links, sign-out, and Retake. Browser Back interception can vary; save before leaving via history controls. Unsaved audio is still in-memory. |
+| Abandoned upload housekeeping | 2.4 | Deferred | Partial uploads or uploaded files without finalized metadata are retained for retry. No broad deletion job was introduced. |
+| Development-tool dependency audit | 2 | Existing dev-only advisory deferred | Production audit reports zero vulnerabilities. Full audit reports five high entries in Next ESLint's braces/micromatch chain; suggested Next 14 downgrade conflicts with Next 16 and was not applied. |
 
 ---
 
@@ -76,10 +83,23 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | MDN Web Audio Clock Scheduling | https://developer.mozilla.org/en-US/docs/Web/API/AudioContext/currentTime and https://developer.mozilla.org/en-US/docs/Web/API/OscillatorNode | 2026-10-22 | Schedule metronome clicks ahead on `audioContext.currentTime` (lookahead window) with `OscillatorNode` + `GainNode` ramps so timing never jitters with `setTimeout` |
 | MDN processed audio capture | https://developer.mozilla.org/en-US/docs/Web/API/AudioContext/createMediaStreamDestination and https://developer.mozilla.org/en-US/docs/Web/API/DynamicsCompressorNode and https://developer.mozilla.org/en-US/docs/Web/API/MediaStreamTrack/getSettings | 2026-10-22 | Record from the processed Web Audio graph; put mic gain before compression; inspect active microphone and browser noise-suppression setting. |
 | Audacity noise reduction / MDN workers | https://manual.audacityteam.org/man/noise_reduction.html and https://manual.audacityteam.org/man/alternative_noise_reduction_techniques.html and https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects | 2026-10-22 | A gate addresses pauses; spectral noise reduction addresses steady hiss under vocals. Avoid excessive reduction and musical-noise artifacts. Transfer the mono buffer to a dedicated worker and terminate it on completion, failure, timeout, or cancellation. |
+| Essentia.js | https://mtg.github.io/essentia.js/docs/api/tutorial-1.%20Getting%20started.html and https://essentia.upf.edu/reference/std_RhythmExtractor2013.html and https://essentia.upf.edu/reference/std_KeyExtractor.html | 2026-10-22 | Pinned 0.1.3 ES builds in a lazy worker; rhythm requires 44.1 kHz; KeyExtractor returns key/scale/strength. Input/output vectors disposed and worker terminated. |
+| Supabase signed TUS and file metadata | https://supabase.com/docs/guides/storage/uploads/resumable-uploads and https://github.com/supabase/supabase/blob/master/examples/storage/resumable-upload-signed-uppy/index.html and https://supabase.com/docs/reference/javascript/file-buckets-info | 2026-10-22 | Signed TUS uses `/upload/resumable/sign` with x-signature, 6 MiB chunks and direct storage hostname. Verify info size/contentType before track insert; signed playback only. Changelog reviewed via HTML fallback; existing TLS deprecation noted, no affected configuration introduced. |
 
 ---
 
 ## Session log (newest first)
+
+### 2026-10-22 — Stage 2 analysis and saving implementation; local acceptance pending
+- **Owner scope:** Continue the rest of Stage 2 and do not push until the stage is complete. Previous noise-reduction quality remains accepted for now; no further audio tuning performed.
+- **Step 2.3:** Added lazy worker-based Essentia analysis with self-hosted pinned ES assets and upstream license, mono 44.1 kHz OfflineAudioContext resampling, bounded 45-second excerpt, tempo confidence, key strength, loudness-based energy, progress/error/manual paths, and editable source labels. Known metronome tempo takes priority. Extracted `TakeReview` from `Recorder` so analysis/save state stays separate from capture/playback.
+- **Step 2.4:** Added owner-checked `/api/takes` prepare/finalize, strict UUID/file/settings validation, deterministic owner folder paths, scoped signed TUS uploads and progress/retry, object verification, idempotent row insertion, and private signed playback. MIME/size/duration and source labels fit existing `vocal_fx` JSON; no migration required. Unsaved warnings cover unload/app links/sign-out/Retake; Retake is disabled during saving. Expired/wrong-owner API sessions return JSON 401 rather than HTML redirects. Public analysis code/assets are excluded from session proxy checks; no private data is served there.
+- **Verification:** 36 tests, lint, typecheck, and build pass. The actual Essentia engine returns C major at about 120 BPM for the generated fixture. Built-UI Chrome fixture confirms real worker results, overrides (97 BPM/E minor/low), failure/retry with stable ID, navigation cancellation, saved-player UI, and metronome 90 BPM priority. Hosted backend fixture verifies a 6,720,044-byte generated WAV through one POST and one PATCH, matching saved row/playback, repeated-save reuse, and exact cleanup. This fixture uses a server-side admin client; real owner session saving is still untested. Compiled client assets have no configured server-secret values. Production dependency audit reports zero vulnerabilities; existing dev-tool advisories documented.
+- **Resolved during verification:** Corrected signed TUS endpoint from general `/resumable` to the official signed example's `/resumable/sign`. Corrected test-helper missing-file cleanup handling; SQL independently confirmed no test artifacts remained. Generated upstream JS is excluded from app linting. Removed an unsupported TUS timeout option caught by the final build; supported metadata-request timeouts remain. Build/browser checks use normal process permissions where the Windows sandbox blocks workers/Chrome; Node tests can use `--test-isolation=none`.
+- **Dependencies:** `essentia.js@0.1.3` supplies the required analysis algorithms; `tus-js-client@4.3.1` supplies direct resumable uploads and progress for large WAV takes. Both exact versions and lockfile are included; no paid service enabled or auth session generated.
+- **Stage gate:** Detailed PASS/UNTESTED evidence and owner steps in `docs/05-STAGE-2-CHECKS.md`. Stage remains unchecked/untagged pending real signed-in/phone acceptance. No Stage 2 changes pushed. Local production build is available at http://localhost:3000; an asynchronous owner check was requested.
+- **Local commit:** `stage 2.4: add vocal analysis and private take saving` (local checkpoint only; push waits for stage completion).
+- **Exact next step:** Owner records a local signed-in take, edits settings, saves, and plays the stored file. Confirm remaining phone/count-in behavior through a trusted HTTPS environment. When P8 passes, tick Stage 2, tag `stage-2-done`, then push the completed stage as requested. Stage 3 generation follows using the ElevenLabs-only decision.
 
 ### 2026-10-22 — Owner accepts current recorder quality for now
 - **Owner evidence:** "Its not perfect but i'll take this version for now, we can revisit later." Further noise cleanup is deferred; no claim of perfect audio or unreported device-test acceptance.

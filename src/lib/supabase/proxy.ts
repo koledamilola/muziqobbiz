@@ -26,6 +26,12 @@ function redirectWithCookies(
   return redirectResponse;
 }
 
+function unauthorizedApi(response: NextResponse) {
+  const denied = NextResponse.json({ error: "Please sign in again before saving. Keep this tab open so your take is not lost." }, { status: 401 });
+  response.cookies.getAll().forEach((cookie) => denied.cookies.set(cookie));
+  return denied;
+}
+
 // Docs: https://supabase.com/docs/guides/auth/server-side/creating-a-client
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -55,6 +61,7 @@ export async function updateSession(request: NextRequest) {
 
   if (error || !claims) {
     if (isPublicPath) return response;
+    if (pathname.startsWith("/api/")) return unauthorizedApi(response);
 
     return redirectWithCookies(request, response, "/login", {
       next: pathname,
@@ -66,6 +73,7 @@ export async function updateSession(request: NextRequest) {
 
   if (!allowedEmail || email !== allowedEmail) {
     await supabase.auth.signOut();
+    if (pathname.startsWith("/api/")) return unauthorizedApi(response);
     return redirectWithCookies(request, response, "/login", {
       error: "private",
     });

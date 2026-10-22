@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import TakeReview from "./TakeReview";
+import { useUnsavedTakeWarning } from "./useUnsavedTakeWarning";
 import {
   BEATS_PER_BAR,
   clampMetronomeBpm,
@@ -41,10 +43,6 @@ type RecorderPhase =
   | "decoding"
   | "review";
 
-type RecorderProps = {
-  onKeepTake?: (take: RecordedTake) => void;
-};
-
 function getAudioContextConstructor(): typeof AudioContext | null {
   if (typeof window === "undefined") return null;
   return (
@@ -55,7 +53,7 @@ function getAudioContextConstructor(): typeof AudioContext | null {
   );
 }
 
-export default function Recorder({ onKeepTake }: RecorderProps) {
+export default function Recorder() {
   const [phase, setPhase] = useState<RecorderPhase>("idle");
   const [elapsedSec, setElapsedSec] = useState(0);
   const [inputLevel, setInputLevel] = useState(0);
@@ -63,7 +61,9 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
   const [micError, setMicError] = useState<MicErrorInfo | null>(null);
   const [decodeError, setDecodeError] = useState<string | null>(null);
   const [take, setTake] = useState<RecordedTake | null>(null);
-  const [isKept, setIsKept] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  useUnsavedTakeWarning(Boolean(take && !isSaved) || ["recording", "count-in", "decoding"].includes(phase));
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSec, setPlaybackSec] = useState(0);
 
@@ -314,7 +314,7 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
     stopPlayback(true);
     setMicError(null);
     setDecodeError(null);
-    setIsKept(false);
+    setIsSaved(false);
 
     if (
       typeof navigator === "undefined" ||
@@ -625,20 +625,15 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
   }, [isPlaying, startPlaybackFrom, stopPlayback, take]);
 
   const handleRetake = useCallback(() => {
+    if (take && !isSaved && !window.confirm("Discard this unsaved take and record again?")) return;
     stopClickPreview();
     stopPlayback(true);
     setTake(null);
-    setIsKept(false);
+    setIsSaved(false);
     setDecodeError(null);
     setElapsedSec(0);
     setPhase("idle");
-  }, [stopClickPreview, stopPlayback]);
-
-  const handleKeep = useCallback(() => {
-    if (!take) return;
-    setIsKept(true);
-    onKeepTake?.(take);
-  }, [onKeepTake, take]);
+  }, [isSaved, stopClickPreview, stopPlayback, take]);
 
   const meterPercent = Math.round(inputLevel * 100);
   const volumePercent = Math.round(
@@ -680,12 +675,12 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
           ) : phase === "review" && take ? (
             <span
               className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ring-1 ${
-                isKept
+                isSaved
                   ? "bg-emerald-950/80 text-emerald-200 ring-emerald-800"
                   : "bg-zinc-900 text-zinc-300 ring-zinc-700"
               }`}
             >
-              {isKept ? "Take kept" : "Ready to review"}
+              {isSaved ? "Take saved" : "Ready to review"}
             </span>
           ) : null}
         </div>
@@ -1225,38 +1220,15 @@ export default function Recorder({ onKeepTake }: RecorderProps) {
                 <button
                   type="button"
                   onClick={handleRetake}
+                  disabled={isSaving}
                   className="inline-flex min-h-11 items-center justify-center rounded-lg border border-zinc-700 px-4 py-2.5 text-sm font-medium text-zinc-200 hover:bg-zinc-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
                 >
                   Retake
                 </button>
-                <button
-                  type="button"
-                  onClick={handleKeep}
-                  className={`inline-flex min-h-11 items-center justify-center rounded-lg px-5 py-2.5 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${
-                    isKept
-                      ? "bg-emerald-700 text-white"
-                      : "bg-emerald-500 text-zinc-950 hover:bg-emerald-400"
-                  }`}
-                >
-                  {isKept ? "Take kept ✓" : "Keep take"}
-                </button>
               </div>
             </div>
 
-            {isKept ? (
-              <div
-                role="status"
-                className="rounded-lg border border-emerald-800/70 bg-emerald-950/40 p-3.5 text-xs text-emerald-200"
-              >
-                Take kept in memory ({formatDuration(take.durationSec)}
-                {take.bpm !== null
-                  ? `, ${take.bpm} BPM known from metronome`
-                  : ", free tempo"}
-                , decoded {take.audioBuffer.length.toLocaleString()} samples). Tempo/key
-                detection (Step 2.3) and saving to your library (Step 2.4) will use this
-                decoded take.
-              </div>
-            ) : null}
+            <TakeReview key={take.createdAt} take={take} onSaved={() => setIsSaved(true)} onSavingChange={setIsSaving} />
           </div>
         ) : null}
       </div>
