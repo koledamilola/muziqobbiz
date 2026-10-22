@@ -6,10 +6,10 @@ Every agent reads this at the start of a session and updates it at the end. The 
 
 ## Current status
 
-- **Current stage / step:** Stage 1 — Foundation complete (`stage-1-done` tagged and pushed)
+- **Current stage / step:** Stage 2.1 — Vocal recorder deployed to `main`; awaiting owner verification on phone/desktop
 - **App URL (production):** https://muziqobbiz.vercel.app
-- **Last working checkpoint (git tag or commit):** `stage-1-done` (Stage 1.5 commit `e472f60` verified live by owner + Stage 1 gate & security audit passed)
-- **Next step:** Stage 2.1 — Vocal recorder on the `/muziqobbiz` page
+- **Last working checkpoint (git tag or commit):** `stage 2.1: recorder` (pushed to `origin/main`)
+- **Next step:** Verify vocal recording/playback/retake on phone and desktop, then start Stage 2.2 — Metronome and count-in
 - **Blockers:** None (`FAL_KEY` and `FAL_MINIMAX_MODEL_ID` are deferred and marked optional while ElevenLabs is used alone for now)
 
 ---
@@ -51,6 +51,7 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | Magic-link callback and sign-out with a real email | 1.3 | Production owner-confirmed | Owner confirms production login opens the studio and Sign out returns to `/login`. The same login/sign-out test also passed on the owner's phone. Localhost authentication remains unverified. Owner confirms new-user signup disabled on 2026-10-21. |
 | Stage 1.4 hosted schema, storage and signed-in check | 1.4 | SQL and owner browser verified | Both migrations applied; owner CRUD and row isolation pass; three private buckets and storage RLS confirmed. Owner supplied the Status success message following local test instructions. Production/phone repeat and actual Storage API round-trip are untested. |
 | Stage 1.5 Status acceptance and provider configuration | 1.5 | Owner-verified live | Owner confirmed all four Status sections (`Owner verified`, `Reachable`, `0 / 25` today's generations, and `All required settings are present`). `FAL_KEY`, `FAL_MINIMAX_MODEL_ID`, and `MINIMAX_API_KEY` remain optional until added. |
+| Stage 2.1 Vocal recorder browser/phone verification | 2.1 | Automated checks pass; owner mic test pending | Unit tests, lint, typecheck, and build pass. Needs real microphone recording, level meter, playback, and retake test on phone and desktop. |
 
 ---
 
@@ -68,10 +69,21 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | Supabase changelog | https://supabase.com/changelog.md | 2026-10-22 | Reviewed PostgreSQL 15.19/17.11 and TLS cipher breaking-change notices; no affected extensions/ciphers introduced by this migration |
 | Supabase job counting | https://supabase.com/docs/reference/javascript/select | 2026-10-22 | Exact count with head:true, owner filter, inclusive UTC start/exclusive next midnight; session client and bounded query timeout |
 | Next.js / Vercel Status rendering | https://nextjs.org/docs/app/getting-started/cache-components and https://vercel.com/docs/environment-variables/system-environment-variables | 2026-10-22 | Request-time cookie-backed checks behind Suspense; VERCEL_GIT_COMMIT_SHA available for deployed version labels; no cross-request cache |
+| MDN Web Audio & MediaRecorder | https://developer.mozilla.org/en-US/docs/Web/API/MediaRecorder and https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/decodeAudioData | 2026-10-22 | Detect `audio/webm` (Opus) vs `audio/mp4` (AAC) via `MediaRecorder.isTypeSupported`; disable `echoCancellation`, `noiseSuppression`, and `autoGainControl` for singing; resume `AudioContext` on user tap and decode every take to an `AudioBuffer` |
 
 ---
 
 ## Session log (newest first)
+
+### 2026-10-22 — Stage 2.1 vocal recorder implementation
+- **Date:** 2026-10-22
+- **Agent / tool used:** Antigravity
+- **Stage / step worked on:** Stage 2.1 — Vocal recorder on the `/muziqobbiz` page
+- **What was done:** Built `src/lib/audio/recorder.ts` and `src/components/Recorder.tsx` and mounted `<Recorder />` on `/muziqobbiz`. Added user-tap `AudioContext` startup/resume, friendly microphone permission errors with step-by-step re-enable instructions for iPhone Safari, Android Chrome, and desktop, MIME type detection (`audio/webm` on Chrome/Android, `audio/mp4` on iOS Safari), mono capture with `echoCancellation`, `noiseSuppression`, and `autoGainControl` turned OFF, a big Record/Stop button, live input level meter, 3-minute max timer with automatic stop, Web Audio decoding into an `AudioBuffer`, interactive waveform preview with click-to-seek playback, and Retake / Keep controls. Added 7 unit tests in `tests/recorder.test.mjs`. Upgraded `next` and `eslint-config-next` from `16.4.0` to `16.4.2` to resolve the Next.js security advisory.
+- **Tested? (by agent / by owner / untested):** Agent: 15 unit tests (`tests/status.test.mjs` and `tests/recorder.test.mjs`), `lint`, `typecheck`, and `build` pass on Next.js 16.4.2. Untested by owner: live microphone recording, level meter, playback, and retake on desktop and phone.
+- **Problems & how they were resolved:** `next build` surfaced a security advisory for Next.js `16.4.0`; upgraded `next` and `eslint-config-next` to `16.4.2` with owner approval.
+- **Commit / tag:** `stage 2.1: recorder` (pushed to `origin/main`)
+- **Exact next step:** Verify recording 20 seconds of singing on phone and desktop, then begin Stage 2.2 — Metronome and count-in.
 
 ### 2026-10-22 — Stage 1 Gate & Security Audit complete (`stage-1-done`)
 - **Date:** 2026-10-22
