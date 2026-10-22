@@ -1,0 +1,3 @@
+# Local Supabase CLI state; migrations and verification SQL stay tracked.
+.temp/
+.branches/

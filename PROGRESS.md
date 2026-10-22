@@ -6,11 +6,11 @@ Every agent reads this at the start of a session and updates it at the end. The 
 
 ## Current status
 
-- **Current stage / step:** Stage 1.3 deployed — owner confirms production login and sign-out; new-user signup disabled. Phone login and sign-out also confirmed. Follow-up fixes prepared for publication; localhost authentication remains unverified.
+- **Current stage / step:** Stage 1.4 requirements verified: hosted tables/buckets/RLS are configured, SQL ownership tests pass, and the owner confirms the signed-in Status database check passes. Publishing this checkpoint to main.
 - **App URL (production):** https://muziqobbiz.vercel.app
-- **Last working checkpoint (git tag or commit):** `0bd5049` (`stage 1.3: login`), pushed to `origin/main` and deployed to production
-- **Next step:** Commit and push the reviewed Stage 1.3 fixes, then begin Stage 1.4 database and storage. Owner authorized proceeding on production and phone evidence; localhost authentication is deferred.
-- **Blockers:** No current production login failure reported. Localhost authentication remains unverified; the October 11 rate-limit failure is historical. Owner approved proceeding after successful production and phone checks.
+- **Last working checkpoint (git tag or commit):** `e470cbc` (`stage 1.3: clarify magic-link login and restrict redirects`), pushed to `origin/main`; GitHub reports Vercel deployment success, checked 2026-10-22.
+- **Next step:** Confirm the production deployment for `stage 1.4: database`, then begin Stage 1.5 (system health Status page). A production/phone repeat of the database button check remains useful release verification.
+- **Blockers:** None for Stage 1.4 implementation. Supabase management access is restored and the owner-session database check passed. Actual audio Storage API round-trip is deferred until an upload flow is implemented.
 
 ---
 
@@ -48,6 +48,7 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 |---|---|---|---|
 | `next dev` appends a "Next.js agent rules" block to AGENTS.md every time it runs | 1 | Open | Reverted each time to keep the owner's rulebook untouched. Owner to decide: keep the block, or ignore it |
 | Magic-link callback and sign-out with a real email | 1.3 | Production owner-confirmed | Owner confirms production login opens the studio and Sign out returns to `/login`. The same login/sign-out test also passed on the owner's phone. Localhost authentication remains unverified. Owner confirms new-user signup disabled on 2026-10-21. |
+| Stage 1.4 hosted schema, storage and signed-in check | 1.4 | SQL and owner browser verified | Both migrations applied; owner CRUD and row isolation pass; three private buckets and storage RLS confirmed. Owner supplied the Status success message following local test instructions. Production/phone repeat and actual Storage API round-trip are untested. |
 
 ---
 
@@ -59,10 +60,41 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | Supabase Auth | https://supabase.com/docs/guides/auth/auth-email-passwordless | 2026-10-11 | Magic links use `signInWithOtp`; redirect URLs must be allow-listed |
 | Supabase changelog | https://supabase.com/changelog.md | 2026-10-11 | Reviewed current breaking changes; new publishable/secret keys are preferred, while the project's fixed environment variable names remain compatible |
 | Supabase Auth rate limits | https://supabase.com/docs/guides/auth/rate-limits | 2026-10-11 | The built-in email provider permits two auth emails per hour, and magic-link requests have a per-user cooldown |
+| Supabase database / Data API | https://supabase.com/docs/guides/database/postgres/row-level-security and https://supabase.com/docs/guides/api/securing-your-api | 2026-10-22 | Explicit CRUD grants plus RLS; ownership checks cover old and new rows; indexed `(select auth.uid())` predicates |
+| Supabase Storage | https://supabase.com/docs/guides/storage/security/access-control and https://supabase.com/docs/guides/storage/buckets/creating-buckets | 2026-10-22 | Private buckets and first-folder ownership; ALL policies cover select/insert/update/delete, including upsert |
+| Supabase types | https://supabase.com/docs/guides/api/rest/generating-types | 2026-10-22 | Hand-maintained schema types supplied to server/browser/admin client generics until hosted generation is available |
+| Supabase changelog | https://supabase.com/changelog.md | 2026-10-22 | Reviewed PostgreSQL 15.19/17.11 and TLS cipher breaking-change notices; no affected extensions/ciphers introduced by this migration |
 
 ---
 
 ## Session log (newest first)
+
+### 2026-10-22 — Owner accepts Stage 1.4 browser check; release checkpoint
+- **Owner evidence:** Following the local test instructions, the owner supplied the Status result: "Database check passed. Your test track and job were saved, read back, and removed." This verifies the signed-in server-action path and its cleanup, in addition to the hosted SQL-role tests.
+- **Validation:** Lint, typecheck, and production build passed for this exact app code in the preceding verification. Only documentation and acceptance evidence changed afterward; no duplicate checks were needed. Configured server-only values were absent from compiled client assets and `.env.local` remains ignored.
+- **Release:** Commit/push checkpoint `stage 1.4: database`; use its GitHub Vercel status to confirm the production rollout. Both database migrations are already applied with matching local/remote version numbers.
+- **Remaining limits:** The new database check has not yet been repeated on deployed production or phone. Actual Storage API file upload/download remains untested until the audio upload workflow exists. Existing password-protection and unused-index advisor notes are documented in docs/03-DATABASE-SETUP.md.
+- **Exact next step:** After the production rollout, Stage 1.5 builds out the full system health Status page. Stage 1 foundation is not complete until that step and its stage gate pass.
+
+### 2026-10-22 — Supabase access restored; hosted Stage 1.4 migration verified
+- **Connection:** Management tools now access the correct healthy project, `wwgzvepbuisjbaodcrpc` (muziqobbiz). Preflight confirmed no public tables, buckets, or storage-object policies and exactly one existing Auth account.
+- **Applied:** Reviewed schema migration applied successfully. A second migration removed PUBLIC/anon/authenticated EXECUTE grants from the pre-existing `public.rls_auto_enable()` SECURITY DEFINER event-trigger helper flagged by Advisors; its function definition and trigger behavior were left intact. Local filenames were aligned with hosted migration versions `20261022161122` and `20261022161241` to prevent future CLI history drift.
+- **Hosted verification:** The full rollback SQL test passed using ordinary authenticated/anon database roles: owner insert/read/update/delete, timestamp update, ownership-transfer denial, other-identity isolation, and anonymous denial. Both app tables plus storage.objects have RLS enabled; vocals, instrumentals, and mixes are private. No test records remain. The helper's public-execution grants are now absent and both associated security warnings cleared.
+- **Advisors:** Remaining warning: leaked-password protection disabled (https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection); app uses magic links and password settings were not changed. Two new creation-time indexes are informationally unused (https://supabase.com/docs/guides/database/database-linter?lint=0005_unused_index); retained for planned queries.
+- **Validation:** Lint, typecheck, and the production build passed again. No app code changed during connection recovery and hosted migration application.
+- **Still pending:** Real signed-in Status server-action check, actual Storage API file round-trip, owner phone validation of the new Status control, commit, and app deployment. SQL role simulation does not verify the owner's browser session. Stage 1.4 is not marked complete.
+- **Proposed commit:** `stage 1.4: database`.
+- **Exact next step:** Owner runs the already-built local app (`npm run start`), signs in, opens Status, and clicks Run database check. Expect the success message and automatic cleanup. No SQL needs to be pasted or reapplied. Commit/publish after browser acceptance; Stage 1.5 follows.
+
+### 2026-10-22 — Stage 1.4 database and storage implementation
+- **What changed:** Created `supabase/migrations/20261022161122_stage_1_4_database.sql` with both planned tables, defaults/checks, same-owner foreign keys, indexes, the track update timestamp trigger, explicit grants, RLS, three private buckets, and folder policies. Added TypeScript schema definitions, typed Supabase clients, a temporary owner-only Status server action with create/read/update/cleanup checks, a rollback SQL verification script, and `docs/03-DATABASE-SETUP.md` with exact application/testing steps.
+- **Security review:** Server action calls `requireOwner` and uses the cookie-backed session client, not admin. Cleanup is scoped to newly generated UUIDs and the current owner. No secrets or full service errors are returned. Storage has a restrictive folder boundary so unrelated permissive policies cannot expose these music buckets. No reference-audio bucket or upload flow was added.
+- **Validation:** Lint, typecheck, and production build pass; configured server-only values are absent from compiled client assets. Executed the complete migration and rollback verification in temporary PGlite 0.5.11 with minimal Supabase auth/storage interfaces: owner CRUD, timestamp update, ownership-transfer denial, anonymous/other-user isolation, and cleanup pass. Additional isolated tests passed for all three storage folders, denied root/other-user writes, cross-user reads/deletes, a broad legacy storage policy, and same-owner foreign keys. These isolated tests do not verify hosted Supabase's Storage API or browser sessions.
+- **Hosted observations:** Read-only calls against the configured muziqobbiz project returned PGRST205 for both tables and an empty bucket list. The connected management tools list only imagineos-dev; no live writes, migration application, or security advisors were attempted against that unrelated project. Stage 1.3 commit `e470cbc` has a successful Vercel status.
+- **Tooling:** Supabase CLI 2.121.0 created the migration filename. CLI and temporary PGlite validation tools were used outside app dependencies; package.json/package-lock.json are unchanged. No local Docker/Postgres installation was available.
+- **Decisions / limits:** Hand-maintained database types; user/creation-time and foreign-key indexes; child references must share ownership. Paid-plan/provider verification remains the responsibility of the future release workflow. Browser-session check, real storage API access, hosted advisors, commit, and deployment remain pending. Stage 1.4 is not marked complete.
+- **Proposed commit:** `stage 1.4: database`.
+- **Exact next step:** Owner applies the SQL migration once in the muziqobbiz SQL Editor, runs `supabase/tests/stage_1_4_verify.sql`, and uses Status > Run database check in the local build. After verification, commit/push this checkpoint and repeat the Status check on production/phone before Stage 1.5.
 
 ### 2026-10-21 — Phone verification and publication of login fixes
 - **Owner evidence:** Owner confirms the same production login/sign-out test passes on a phone, confirms signup is disabled, and explicitly requests committing and pushing all pending changes before moving forward.
