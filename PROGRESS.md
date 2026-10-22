@@ -6,11 +6,11 @@ Every agent reads this at the start of a session and updates it at the end. The 
 
 ## Current status
 
-- **Current stage / step:** Stage 1.4 requirements verified: hosted tables/buckets/RLS are configured, SQL ownership tests pass, and the owner confirms the signed-in Status database check passes. Publishing this checkpoint to main.
+- **Current stage / step:** Stage 1.5 implemented: owner-only server-rendered system health, configuration presence, exact daily job count/limit, and app version/commit. Automated checks pass; all required local settings (Supabase + ElevenLabs) are configured; signed-in local/live and phone acceptance remains pending.
 - **App URL (production):** https://muziqobbiz.vercel.app
-- **Last working checkpoint (git tag or commit):** `e470cbc` (`stage 1.3: clarify magic-link login and restrict redirects`), pushed to `origin/main`; GitHub reports Vercel deployment success, checked 2026-10-22.
-- **Next step:** Confirm the production deployment for `stage 1.4: database`, then begin Stage 1.5 (system health Status page). A production/phone repeat of the database button check remains useful release verification.
-- **Blockers:** None for Stage 1.4 implementation. Supabase management access is restored and the owner-session database check passed. Actual audio Storage API round-trip is deferred until an upload flow is implemented.
+- **Last working checkpoint (git tag or commit):** `1402815` (`stage 1.4: database`), pushed to main with successful Vercel deployment. Hosted schema and owner database check verified.
+- **Next step:** Publish Stage 1.5 and confirm the signed-in Status page locally and on production/phone using docs/04-STATUS-CHECKS.md. Then run the Stage 1 review/security gate before Stage 2.
+- **Blockers:** Signed-in Stage 1.5 browser acceptance is pending. (`FAL_KEY` and `FAL_MINIMAX_MODEL_ID` are deferred and marked optional while ElevenLabs is used alone for now.)
 
 ---
 
@@ -39,6 +39,7 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | 2026-10-06 | Use Node 24 LTS (v24.21.0) via Homebrew `node@24` instead of Node 26 (Current) | Setup guide asks for LTS | Owner |
 | 2026-10-06 | Kept create-next-app defaults for Next.js 16.4 (`cacheComponents`, `partialPrefetching` on in next.config.ts) | Scaffold default; revisit if it blocks auth/data pages in Stage 1.3 | Agent |
 | 2026-10-11 | Installed Node 24 LTS (v24.21.0) system-wide on Windows | Matches the project's selected LTS version and makes npm available in every terminal | Owner |
+| 2026-10-22 | Use ElevenLabs alone for now; defer FAL.AI (`FAL_KEY`, `FAL_MINIMAX_MODEL_ID`) until later | Owner currently has an ElevenLabs account only; Status treats FAL settings as optional until added | Owner |
 
 ---
 
@@ -49,6 +50,7 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | `next dev` appends a "Next.js agent rules" block to AGENTS.md every time it runs | 1 | Open | Reverted each time to keep the owner's rulebook untouched. Owner to decide: keep the block, or ignore it |
 | Magic-link callback and sign-out with a real email | 1.3 | Production owner-confirmed | Owner confirms production login opens the studio and Sign out returns to `/login`. The same login/sign-out test also passed on the owner's phone. Localhost authentication remains unverified. Owner confirms new-user signup disabled on 2026-10-21. |
 | Stage 1.4 hosted schema, storage and signed-in check | 1.4 | SQL and owner browser verified | Both migrations applied; owner CRUD and row isolation pass; three private buckets and storage RLS confirmed. Owner supplied the Status success message following local test instructions. Production/phone repeat and actual Storage API round-trip are untested. |
+| Stage 1.5 Status acceptance and provider configuration | 1.5 | Automated checks pass; owner checks pending | Eight focused tests, lint/typecheck/build, and signed-out HTTP protection pass. Local `ELEVENLABS_API_KEY`, `ELEVENLABS_PLAN_IS_PAID`, and `DAILY_GENERATION_LIMIT` are configured; `FAL_KEY`, `FAL_MINIMAX_MODEL_ID`, and `MINIMAX_API_KEY` are marked optional for now. See docs/04-STATUS-CHECKS.md for local/live/phone verification. |
 
 ---
 
@@ -64,10 +66,22 @@ Record any change from the defaults in `docs/01-SETUP-GUIDE.md` Part B, plus any
 | Supabase Storage | https://supabase.com/docs/guides/storage/security/access-control and https://supabase.com/docs/guides/storage/buckets/creating-buckets | 2026-10-22 | Private buckets and first-folder ownership; ALL policies cover select/insert/update/delete, including upsert |
 | Supabase types | https://supabase.com/docs/guides/api/rest/generating-types | 2026-10-22 | Hand-maintained schema types supplied to server/browser/admin client generics until hosted generation is available |
 | Supabase changelog | https://supabase.com/changelog.md | 2026-10-22 | Reviewed PostgreSQL 15.19/17.11 and TLS cipher breaking-change notices; no affected extensions/ciphers introduced by this migration |
+| Supabase job counting | https://supabase.com/docs/reference/javascript/select | 2026-10-22 | Exact count with head:true, owner filter, inclusive UTC start/exclusive next midnight; session client and bounded query timeout |
+| Next.js / Vercel Status rendering | https://nextjs.org/docs/app/getting-started/cache-components and https://vercel.com/docs/environment-variables/system-environment-variables | 2026-10-22 | Request-time cookie-backed checks behind Suspense; VERCEL_GIT_COMMIT_SHA available for deployed version labels; no cross-request cache |
 
 ---
 
 ## Session log (newest first)
+
+### 2026-10-22 — Stage 1.5 system health Status page
+- **What changed:** Added server-only configuration and health modules. Status now verifies the owner before checking settings/data and shows the signed-in email, Supabase reachability, all ten configured/missing indicators (MiniMax direct optional), actual daily jobs versus configured limit, package version, optional Vercel commit, and UTC check time. Added a full-page refresh link and kept the earlier write test under an Advanced disclosure. No automatic writes or provider calls.
+- **Decisions:** Daily usage uses UTC midnight boundaries and counts all job statuses, matching the future quota query. Missing/invalid limits remain explicit; zero is valid. A failed, timed-out, or count-less database response shows unavailable rather than zero. Configured means nonempty, not validated credentials; `false` remains a valid present setting. New generation endpoints must enforce quotas later.
+- **Security:** `readSystemStatus` requires the verified owner before reading environment settings, uses the cookie-backed session client/RLS, and returns only allow-listed presence flags plus intended account/usage/version metadata. Never returns raw provider settings or service error details. No shared caching. Configured server-only values were absent from compiled static client assets.
+- **Validation:** Eight focused Node tests pass: presence/secret redaction, limits, UTC day rollover, commit validation, authorization order, exact owner-scoped counting, outage handling, and server-rendered missing/error states. Lint, typecheck, and production build pass. Local production server serves login with 200 and redirects signed-out Status to login with 307. Hosted SQL independently reports zero jobs today. Signed-in browser rendering is still awaiting the owner; no login email or admin session was generated by the agent.
+- **Configuration:** Local `ELEVENLABS_API_KEY`, `ELEVENLABS_PLAN_IS_PAID`, and `DAILY_GENERATION_LIMIT` are configured alongside all Supabase and owner settings (all 7 required variables present). `FAL_KEY`, `FAL_MINIMAX_MODEL_ID`, and `MINIMAX_API_KEY` are marked `(optional)` while ElevenLabs is used alone for now. No paid services enabled by the agent, database migrations made, or app dependencies added.
+- **Docs / tests:** docs/04-STATUS-CHECKS.md explains local/live/phone checks, settings, UTC reset, unavailable states, and limits. Run `node --test tests/status.test.mjs` for focused regression checks. Reviewed Supabase count docs, Next.js Cache Components, Vercel runtime commit metadata, and React server authorization guidance.
+- **Release checkpoint:** `stage 1.5: status page`; production rollout and signed-in local/live/phone acceptance are pending at this checkpoint. Stage 1 is not marked complete or tagged until its review/security gate passes.
+- **Exact next step:** Owner checks localhost Status, then repeat on production/phone after deployment. Run the Stage 1 review/security gate next.
 
 ### 2026-10-22 — Owner accepts Stage 1.4 browser check; release checkpoint
 - **Owner evidence:** Following the local test instructions, the owner supplied the Status result: "Database check passed. Your test track and job were saved, read back, and removed." This verifies the signed-in server-action path and its cleanup, in addition to the hosted SQL-role tests.
